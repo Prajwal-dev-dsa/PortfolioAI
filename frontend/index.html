@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Prajwal AI — Portfolio Assistant</title>
+    <meta
+      name="description"
+      content="An AI assistant built to answer questions about Prajwal's skills, projects, and engineering background."
+    />
+
+    <!-- Apply saved theme before first paint to avoid a flash of the wrong theme -->
+    <script>
+      (function () {
+        try {
+          var saved = localStorage.getItem("portfolio_ai_theme");
+          var theme = saved === "light" ? "light" : "dark";
+          document.documentElement.setAttribute("data-theme", theme);
+        } catch (e) {
+          document.documentElement.setAttribute("data-theme", "dark");
+        }
+      })();
+    </script>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="app" id="app">
+      <!-- ===================== SIDEBAR ===================== -->
+      <aside class="sidebar" id="sidebar" aria-label="Sidebar">
+        <div class="sidebar-inner" id="sidebarInner">
+          <div class="sidebar-top">
+            <div class="brand">
+              <span class="brand-mark" aria-hidden="true">
+                <span class="brand-mark-glyph">P</span>
+              </span>
+              <span class="brand-name"
+                >Prajwal <span class="brand-name-accent">AI</span></span
+              >
+            </div>
+            <button
+              class="icon-btn sidebar-close-btn"
+              id="sidebarCloseBtn"
+              data-tooltip="Close sidebar"
+              aria-label="Close sidebar"
+            >
+              <i data-lucide="x"></i>
+            </button>
+          </div>
+
+          <button
+            class="new-chat-btn"
+            id="newChatBtn"
+            data-tooltip="Start a new chat"
+          >
+            <i data-lucide="plus"></i>
+            <span>New chat</span>
+          </button>
+
+          <div class="sidebar-section">
+            <p class="sidebar-section-label">Conversations</p>
+            <div class="conversation-list" id="conversationList">
+              <div class="empty-conversations">
+                <i
+                  data-lucide="message-square"
+                  class="empty-conversations-icon"
+                ></i>
+                <p>No conversations yet</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="sidebar-bottom">
+            <div
+              class="backend-status"
+              id="backendStatus"
+              data-tooltip="Checking backend connection…"
+            >
+              <span class="backend-status-dot" id="backendStatusDot"></span>
+              <span class="backend-status-text" id="backendStatusText"
+                >Checking backend…</span
+              >
+            </div>
+
+            <div class="sidebar-profile">
+              <span class="profile-avatar" aria-hidden="true">P</span>
+              <span class="profile-meta">
+                <span class="profile-name">Prajwal</span>
+                <span class="profile-role">AI Portfolio</span>
+              </span>
+              <button
+                class="icon-btn theme-toggle"
+                id="themeToggle"
+                data-tooltip="Toggle theme"
+                aria-label="Toggle light and dark theme"
+              >
+                <i data-lucide="sun" class="theme-icon theme-icon-sun"></i>
+                <i data-lucide="moon" class="theme-icon theme-icon-moon"></i>
+              </button>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Mobile overlay behind the sidebar drawer -->
+      <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+      <!-- ===================== MAIN ===================== -->
+      <div class="main">
+        <button
+          class="icon-btn sidebar-expand-btn"
+          id="sidebarExpandBtn"
+          data-tooltip="Open sidebar"
+          aria-label="Open sidebar"
+          hidden
+        >
+          <i data-lucide="panel-left"></i>
+        </button>
+
+        <!-- Apply saved sidebar state instantly to avoid a flash on load -->
+        <script>
+          (function () {
+            try {
+              var isMobile = window.matchMedia("(max-width: 900px)").matches;
+              var sidebarState = localStorage.getItem("portfolio_ai_sidebar");
+              if (!isMobile && sidebarState === "closed") {
+                document
+                  .getElementById("sidebar")
+                  .classList.add("is-collapsed");
+                var expandBtn = document.getElementById("sidebarExpandBtn");
+                expandBtn.hidden = false;
+                expandBtn.classList.add("is-visible");
+              }
+            } catch (e) {}
+          })();
+        </script>
+
+        <header class="topbar">
+          <button
+            class="icon-btn menu-btn"
+            id="menuBtn"
+            data-tooltip="Open sidebar"
+            aria-label="Open sidebar"
+          >
+            <i data-lucide="menu"></i>
+          </button>
+
+          <div class="topbar-title">
+            <span class="topbar-brand-mark" aria-hidden="true">P</span>
+            <span>Prajwal AI</span>
+          </div>
+
+          <button
+            class="icon-btn theme-toggle topbar-theme-toggle"
+            id="themeToggleMobile"
+            data-tooltip="Toggle theme"
+            aria-label="Toggle light and dark theme"
+          >
+            <i data-lucide="sun" class="theme-icon theme-icon-sun"></i>
+            <i data-lucide="moon" class="theme-icon theme-icon-moon"></i>
+          </button>
+        </header>
+
+        <main class="chat-area" id="chatArea">
+          <!-- ============ WELCOME SCREEN ============ -->
+          <section class="welcome-screen" id="welcomeScreen">
+            <div class="welcome-inner">
+              <span class="welcome-mark" aria-hidden="true">
+                <i data-lucide="sparkles"></i>
+              </span>
+              <h1 class="welcome-heading">Ask me anything about Prajwal</h1>
+              <p class="welcome-sub">
+                I'm an AI assistant trained on Prajwal's background — technical
+                skills, projects, professional experience, and the way he's
+                learning and building as an engineer.
+              </p>
+
+              <div class="suggestion-grid" id="suggestionGrid">
+                <button
+                  class="suggestion-card"
+                  data-prompt="Tell me about Prajwal"
+                >
+                  <i data-lucide="user"></i>
+                  <span>Tell me about Prajwal</span>
+                </button>
+                <button
+                  class="suggestion-card"
+                  data-prompt="What technologies does Prajwal know?"
+                >
+                  <i data-lucide="code-2"></i>
+                  <span>What technologies does Prajwal know?</span>
+                </button>
+                <button
+                  class="suggestion-card"
+                  data-prompt="What projects has Prajwal built?"
+                >
+                  <i data-lucide="folder-kanban"></i>
+                  <span>What projects has Prajwal built?</span>
+                </button>
+                <button
+                  class="suggestion-card"
+                  data-prompt="What is Prajwal's experience with AI?"
+                >
+                  <i data-lucide="brain-circuit"></i>
+                  <span>What is Prajwal's experience with AI?</span>
+                </button>
+                <button
+                  class="suggestion-card"
+                  data-prompt="How strong is Prajwal's backend experience?"
+                >
+                  <i data-lucide="server"></i>
+                  <span>How strong is Prajwal's backend experience?</span>
+                </button>
+                <button
+                  class="suggestion-card"
+                  data-prompt="What cloud and deployment experience does Prajwal have?"
+                >
+                  <i data-lucide="cloud"></i>
+                  <span
+                    >What cloud and deployment experience does Prajwal
+                    have?</span
+                  >
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <!-- ============ MESSAGES ============ -->
+          <div class="messages" id="messagesContainer" aria-live="polite"></div>
+        </main>
+
+        <!-- ===================== COMPOSER ===================== -->
+        <div class="composer-wrapper">
+          <div class="composer-inner">
+            <div class="attachment-preview" id="attachmentPreview">
+              <i data-lucide="file-text" class="attachment-icon"></i>
+              <span class="attachment-meta">
+                <span class="attachment-name" id="attachmentName"></span>
+                <span class="attachment-type" id="attachmentType"></span>
+              </span>
+              <button
+                class="icon-btn attachment-remove"
+                id="attachmentRemove"
+                data-tooltip="Remove attachment"
+                aria-label="Remove attachment"
+              >
+                <i data-lucide="x"></i>
+              </button>
+            </div>
+
+            <form class="composer" id="composerForm">
+              <button
+                type="button"
+                class="icon-btn composer-attach-btn"
+                id="attachBtn"
+                data-tooltip="Attach a file"
+                aria-label="Attach a file"
+              >
+                <i data-lucide="paperclip"></i>
+              </button>
+
+              <input
+                type="file"
+                id="fileInput"
+                accept=".pdf,.docx,.txt"
+                hidden
+              />
+
+              <textarea
+                id="messageInput"
+                class="composer-textarea"
+                placeholder="Message Prajwal AI…"
+                rows="1"
+                aria-label="Message input"
+              ></textarea>
+
+              <button
+                type="submit"
+                class="send-btn"
+                id="sendBtn"
+                data-tooltip="Send message"
+                aria-label="Send message"
+                disabled
+              >
+                <i data-lucide="arrow-up" class="send-icon"></i>
+                <i data-lucide="loader-circle" class="send-loading-icon"></i>
+              </button>
+            </form>
+
+            <p class="composer-hint">
+              Prajwal AI is a portfolio preview and can make mistakes.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tooltip" id="customTooltip" role="tooltip"></div>
+
+    <script src="https://unpkg.com/lucide@0.469.0/dist/umd/lucide.js"></script>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
