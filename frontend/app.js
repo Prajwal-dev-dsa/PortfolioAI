@@ -18,6 +18,7 @@ const state = {
   isSending: false,
   hasMessages: false,
   attachedFile: null,
+  conversationHistory: [],
   mobileMediaQuery: window.matchMedia("(max-width: 900px)"),
 };
 
@@ -375,24 +376,59 @@ function updateSendButtonState() {
 
 async function sendMessage() {
   const text = els.messageInput.value.trim();
+
   if (!text || state.isSending) return;
 
   state.isSending = true;
   showWelcomeIfFirstMessage();
 
   addMessage("user", text);
-  const sentAttachment = state.attachedFile;
+
+  // Keep the currently attached file behavior unchanged for now.
+  // Actual file processing will be implemented in the JD-analysis phase.
   clearAttachment();
   resetTextarea();
   updateSendButtonState();
 
   setSendButtonLoading(true);
+
   const thinkingEl = addThinkingIndicator();
 
+  // Only send previous successful conversation turns
+  // to the backend for this request.
+  const historyForRequest = [...state.conversationHistory];
+
   try {
-    const replyText = await getMockAssistantResponse(text, sentAttachment);
+    const replyText = await getAssistantResponse(
+      text,
+      historyForRequest
+    );
+
     removeThinkingIndicator(thinkingEl);
+
     addMessage("assistant", replyText);
+
+    // Update conversation memory only after a successful response.
+    state.conversationHistory.push({
+      role: "user",
+      content: text
+    });
+
+    state.conversationHistory.push({
+      role: "assistant",
+      content: replyText
+    });
+
+  } catch (error) {
+    console.error("Chat request failed:", error);
+
+    removeThinkingIndicator(thinkingEl);
+
+    addMessage(
+      "assistant",
+      "I couldn't reach the AI backend right now. Please try again in a moment."
+    );
+
   } finally {
     setSendButtonLoading(false);
     state.isSending = false;
@@ -515,7 +551,7 @@ function scrollToLatestMessage() {
 function resetChat() {
   state.hasMessages = false;
   state.isSending = false;
-
+  state.conversationHistory = [];
   els.messagesContainer.innerHTML = "";
   els.messagesContainer.classList.remove("is-active");
   els.welcomeScreen.style.display = "flex";
@@ -539,24 +575,46 @@ function resetChat() {
   els.messageInput.focus();
 }
 
-// ---------- Mock assistant response (Phase 2 — no live LLM yet) ----------
+// =============================================================
+// REAL AI BACKEND
+// =============================================================
 
-const MOCK_RESPONSES = {
-  default:
-    "This is the portfolio AI preview. Real AI responses will be connected in Phase 3, powered by Prajwal's backend.",
-};
+async function getAssistantResponse(userText, history) {
+  const response = await fetch(
+    `${BACKEND_BASE_URL}/api/chat`,
+    {
+      method: "POST",
 
-function getMockAssistantResponse(userText, attachment) {
-  return new Promise((resolve) => {
-    const delay = 600 + Math.random() * 500;
-    setTimeout(() => {
-      let reply = MOCK_RESPONSES.default;
-      if (attachment) {
-        reply += `\n\nI can see you attached **${attachment.name}** — file analysis will be available once the backend parsing endpoint is connected.`;
-      }
-      resolve(reply);
-    }, delay);
-  });
+      headers: {
+        "Content-Type": "application/json",
+      },
+
+      body: JSON.stringify({
+        message: userText,
+        history: history,
+      }),
+    }
+  );
+
+  let data = null;
+
+  try {
+    data = await response.json();
+  } catch (error) {
+    throw new Error("Invalid response received from backend.");
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      data?.detail || "Failed to generate AI response."
+    );
+  }
+
+  if (!data?.response) {
+    throw new Error("AI backend returned an empty response.");
+  }
+
+  return data.response;
 }
 
 // =============================================================
@@ -687,10 +745,145 @@ function escapeHtml(str) {
 
 function renderInline(text) {
   let out = escapeHtml(text);
-  out = out.replace(/`([^`]+)`/g, "<code>$1</code>");
-  out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  out = out.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "<em>$1</em>");
-  out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+
+  // ---------------------------------------------------------
+  // Protect inline code so URLs/emails/phone numbers inside
+  // code blocks are not converted into clickable links.
+  // ---------------------------------------------------------
+  const codePlaceholders = [];
+
+  out = out.replace(/`([^`]+)`/g, (_, code) => {
+    const index = codePlaceholders.length;
+
+    codePlaceholders.push(`<code>${code}</code>`);
+
+    return `@@CODE_${index}@@`;
+  });
+
+
+  // ---------------------------------------------------------
+  // Protect Markdown links.
+  // Supports:
+  // https://
+  // http://
+  // mailto:
+  // tel:
+  // ---------------------------------------------------------
+  const linkPlaceholders = [];
+
+  out = out.replace(
+    /\[([^\]]+)\]\(((?:https?:\/\/|mailto:|tel:)[^\s)]+)\)/g,
+    (_, label, url) => {
+      const index = linkPlaceholders.length;
+
+      linkPlaceholders.push(`
+        <a
+          href="${url}"
+          target="_blank"
+          rel="noopener noreferrer"
+        >${label}</a>
+      `);
+
+      return `@@LINK_${index}@@`;
+    }
+  );
+
+
+  // ---------------------------------------------------------
+  // Convert plain HTTP/HTTPS URLs into clickable links.
+  // ---------------------------------------------------------
+  out = out.replace(
+    /https?:\/\/[^\s<]+/g,
+    (url) => {
+      const trailingMatch = url.match(/[.,!?;:]+$/);
+
+      const trailing = trailingMatch
+        ? trailingMatch[0]
+        : "";
+
+      const cleanUrl = trailing
+        ? url.slice(0, -trailing.length)
+        : url;
+
+      return `
+        <a
+          href="${cleanUrl}"
+          target="_blank"
+          rel="noopener noreferrer"
+        >${cleanUrl}</a>${trailing}
+      `;
+    }
+  );
+
+
+  // ---------------------------------------------------------
+  // Convert plain email addresses into clickable mailto links.
+  // ---------------------------------------------------------
+  out = out.replace(
+    /(?<![\w.-])([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})(?![\w.-])/g,
+    '<a href="mailto:$1">$1</a>'
+  );
+
+
+  // ---------------------------------------------------------
+  // Convert phone numbers into clickable tel links.
+  //
+  // Handles formats such as:
+  // +91 8002 974 625
+  // +91-8002-974-625
+  // 8002974625
+  // ---------------------------------------------------------
+  out = out.replace(
+    /(?<![\d])(\+91[\s-]?)?[6-9]\d{3}[\s-]?\d{3}[\s-]?\d{3}(?![\d])/g,
+    (phone) => {
+      const digits = phone.replace(/\D/g, "");
+
+      const internationalNumber =
+        phone.trim().startsWith("+91")
+          ? `+${digits}`
+          : `+91${digits}`;
+
+      return `
+        <a
+          href="tel:${internationalNumber}"
+        >${phone}</a>
+      `;
+    }
+  );
+
+
+  // ---------------------------------------------------------
+  // Basic Markdown formatting.
+  // ---------------------------------------------------------
+  out = out.replace(
+    /\*\*([^*]+)\*\*/g,
+    "<strong>$1</strong>"
+  );
+
+  out = out.replace(
+    /(?<!\*)\*([^*]+)\*(?!\*)/g,
+    "<em>$1</em>"
+  );
+
+
+  // ---------------------------------------------------------
+  // Restore protected Markdown links.
+  // ---------------------------------------------------------
+  out = out.replace(
+    /@@LINK_(\d+)@@/g,
+    (_, index) => linkPlaceholders[Number(index)]
+  );
+
+
+  // ---------------------------------------------------------
+  // Restore protected inline code.
+  // ---------------------------------------------------------
+  out = out.replace(
+    /@@CODE_(\d+)@@/g,
+    (_, index) => codePlaceholders[Number(index)]
+  );
+
+
   return out;
 }
 

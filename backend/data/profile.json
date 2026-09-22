@@ -1,0 +1,577 @@
+{
+  "identity": {
+    "name": "Prajwal",
+    "location": "Jamshedpur, Jharkhand, India",
+    "role": "Final Year B.Tech Computer Science and Engineering Student",
+    "career_focus": [
+      "Software Development",
+      "AI Engineering"
+    ],
+    "professional_summary": "Final year B.Tech CSE student with hands-on experience building production-ready full-stack applications and multi-agent AI platforms using Next.js, MERN, PERN, and Node.js microservices. Built and shipped multiple full-stack and AI projects involving authentication, real-time systems, payments, microservices, RAG, and generative AI."
+  },
+  "contact": {
+    "mobile": "+918002974625",
+    "email": "prajwal77dwivedi@gmail.com",
+    "linkedin": "https://www.linkedin.com/in/prajwaldwivedi",
+    "github": "https://github.com/Prajwal-dev-dsa",
+    "leetcode": "https://leetcode.com/Prajwald01"
+  },
+  "education": {
+    "institution": "Netaji Subhas University",
+    "degree": "Bachelor of Technology in Computer Science and Engineering",
+    "start_date": "September 2023",
+    "expected_end_date": "August 2027",
+    "cgpa": "9.00/10.0",
+    "coursework": [
+      "Data Structures & Algorithms",
+      "Operating Systems",
+      "Database Management Systems",
+      "Object-Oriented Programming",
+      "Computer Networks"
+    ]
+  },
+  "experience": [
+    {
+      "company": "QOE Technologies and Services",
+      "role": "Generative AI Engineer Intern",
+      "type": "Remote Internship",
+      "start_date": "2026-05-01",
+      "end_date": "2026-06-30",
+      "duration": "2 months",
+      "certificate_date": "2026-07-17",
+      "internship_project": "CortexAI",
+      "responsibilities": [
+        "Architected and shipped CortexAI as the core internship project — a multi-agent AI SaaS platform with 8 specialized agents.",
+        "Orchestrated specialized agents as LangGraph flows via LangChain and routed requests across multiple LLM providers including Groq, DeepSeek, and Gemini.",
+        "Designed a Node.js microservices architecture consisting of Auth, Chat, Agent, and Billing services behind a single API Gateway.",
+        "Used Upstash Redis for session caching, per-conversation memory, and per-agent rate limiting.",
+        "Built a RAG pipeline using document chunking, embeddings, and Qdrant vector search for grounded document Q&A.",
+        "Implemented credit-based billing with Razorpay and Firebase Authentication verified server-side.",
+        "Built a React/Redux frontend with a Monaco-powered coding artifact panel and live preview."
+      ],
+      "technologies_used": [
+        "React",
+        "Redux",
+        "Node.js",
+        "Express.js",
+        "MongoDB",
+        "LangChain",
+        "LangGraph",
+        "Multi-Agent Orchestration",
+        "Groq",
+        "DeepSeek",
+        "Google Gemini",
+        "OpenRouter",
+        "RAG",
+        "Qdrant",
+        "Upstash Redis",
+        "Firebase Authentication",
+        "Razorpay",
+        "Monaco Editor",
+        "Cloudinary",
+        "pdfkit",
+        "pptxgenjs",
+        "Tavily API",
+        "Pollinations.ai",
+        "Git",
+        "GitHub"
+      ]
+    },
+    {
+      "company": "QOE Technologies and Services",
+      "role": "Full Stack Developer Intern",
+      "type": "Remote Internship",
+      "start_date": "2025-05-20",
+      "end_date": "2025-07-20",
+      "duration": "2 months",
+      "certificate_date": "2025-07-31",
+      "internship_project": "YouTube Clone",
+      "responsibilities": [
+        "Built and maintained production features across the MERN stack.",
+        "Worked on front-end development using HTML5, CSS3, JavaScript, and React.js.",
+        "Worked on back-end development using Node.js, Express.js, and MongoDB.",
+        "Designed and implemented RESTful APIs integrated with MongoDB.",
+        "Used Git for version control and Jira for project management and sprint tracking.",
+        "As part of extended internship training, architected and shipped a full-featured YouTube-style streaming platform clone with authentication, content management, AI-powered search, and creator studio analytics."
+      ],
+      "technologies_used": [
+        "HTML5",
+        "CSS3",
+        "JavaScript",
+        "React.js",
+        "Node.js",
+        "Express.js",
+        "MongoDB",
+        "Mongoose",
+        "Git",
+        "GitHub",
+        "Jira",
+        "REST APIs",
+        "Google GenAI",
+        "Firebase Authentication",
+        "JWT",
+        "bcryptjs",
+        "Helmet",
+        "CORS",
+        "Cloudinary",
+        "Upstash Redis",
+        "Tailwind CSS",
+        "Framer Motion",
+        "Zustand",
+        "Recharts"
+      ]
+    }
+  ],
+  "projects": [
+    {
+      "name": "CortexAI",
+      "category": "Multi-Agent AI SaaS Platform",
+      "status": "Live",
+      "description": "A production-grade, multi-agent AI SaaS platform built with a Node.js microservices architecture, inspired by ChatGPT, Gemini, and Claude. It brings together 8 specialized AI agents under one platform, backed by Redis-powered memory, a RAG pipeline, and a credit-based billing system.",
+      "platform_structure": {
+        "microservices": [
+          "Auth",
+          "Chat",
+          "Agent",
+          "Billing"
+        ],
+        "architecture": "4 independently deployable Node.js microservices behind a single API Gateway"
+      },
+      "agents": [
+        "Chat & Search",
+        "Coding",
+        "Image",
+        "PDF",
+        "PPT",
+        "PDF-RAG",
+        "Image Analyzer"
+      ],
+      "agent_details": {
+        "Chat & Search": [
+          "Groq",
+          "Tavily API"
+        ],
+        "Coding": [
+          "DeepSeek",
+          "OpenRouter",
+          "Monaco Editor",
+          "Live HTML/CSS/JS Preview"
+        ],
+        "Image": [
+          "LLM-refined prompts",
+          "Pollinations.ai"
+        ],
+        "PDF & PPT": [
+          "pdfkit",
+          "pptxgenjs"
+        ],
+        "PDF-RAG": [
+          "Chunking",
+          "Embeddings",
+          "Qdrant Vector Search"
+        ],
+        "Image Analyzer": [
+          "Groq API"
+        ]
+      },
+      "core_features": [
+        "Central agent router for specialized-agent orchestration",
+        "LangChain and LangGraph based agent workflows",
+        "Multi-provider LLM routing across Groq, DeepSeek via OpenRouter, and Google Gemini",
+        "Upstash Redis for conversation memory, sessions, rate limiting, and caching",
+        "RAG pipeline for grounded document Q&A",
+        "Credit-based billing with Free, Go, Pro, and Enterprise tiers",
+        "Razorpay payments",
+        "Firebase Authentication verified server-side",
+        "Cloudinary persistent file storage",
+        "Light/Dark theme toggle",
+        "Voice input",
+        "Server wakeup handling",
+        "Coding artifact panel with live preview"
+      ],
+      "technologies": [
+        "React",
+        "Redux Toolkit",
+        "Vite",
+        "Node.js",
+        "Express.js",
+        "Microservices Architecture",
+        "API Gateway",
+        "MongoDB",
+        "Mongoose",
+        "LangChain",
+        "LangGraph",
+        "Multi-Agent Orchestration",
+        "RAG",
+        "Qdrant",
+        "Redis (Upstash)",
+        "Groq",
+        "DeepSeek",
+        "OpenRouter",
+        "Google Gemini",
+        "Tavily API",
+        "Pollinations.ai",
+        "Firebase Authentication",
+        "Cloudinary",
+        "Razorpay",
+        "Monaco Editor",
+        "pdfkit",
+        "pptxgenjs"
+      ],
+      "internship_context": "Built as the core project during the Generative AI Engineer internship at QOE Technologies and Services.",
+      "github": "https://github.com/Prajwal-dev-dsa/CortexAi",
+      "live": "https://cortex-ai-nu.vercel.app/"
+    },
+    {
+      "name": "Saarthi",
+      "category": "Full-Stack Vehicle Booking Platform",
+      "status": "Live",
+      "description": "A fully functional vehicle booking web application built with Next.js and TypeScript, covering user onboarding, partner verification, ride booking, live tracking, payments, communication, and earnings distribution.",
+      "roles": [
+        "User",
+        "Partner",
+        "Admin"
+      ],
+      "core_features": [
+        "Google OAuth and manual registration with mandatory email OTP verification",
+        "Nodemailer-based OTP emails",
+        "Light/Dark theme with Framer Motion animations",
+        "Admin analytics dashboard using Recharts",
+        "7-step Partner verification flow",
+        "Vehicle and document verification",
+        "Bank details and Admin review",
+        "Live Video KYC",
+        "Vehicle image and pricing verification",
+        "Live ride booking with real-time map search",
+        "Partner matching within 10 km of pickup",
+        "Ride accept/reject flow",
+        "Cash and Razorpay online payments",
+        "Real-time live location tracking",
+        "Call and real-time chat using Socket.IO",
+        "AI-powered smart chat suggestions using Gemini API",
+        "Two-stage Pickup and Drop OTP verification",
+        "80% Partner / 20% Admin earnings split"
+      ],
+      "technologies": [
+        "Next.js",
+        "TypeScript",
+        "PostgreSQL",
+        "Supabase",
+        "Prisma",
+        "Socket.IO",
+        "ZegoCloud",
+        "WebRTC",
+        "Razorpay",
+        "Cloudinary",
+        "Redux Toolkit",
+        "NextAuth",
+        "Google OAuth",
+        "Google Gemini API",
+        "Nodemailer",
+        "Recharts",
+        "Framer Motion"
+      ],
+      "github": "https://github.com/Prajwal-dev-dsa/Saarthi",
+      "live": "https://saarthi-nextjs.vercel.app/"
+    },
+    {
+      "name": "Zestro",
+      "category": "Full-Stack Grocery Delivery Platform",
+      "status": "Live",
+      "description": "A fully functional grocery delivery web application built with Next.js and TypeScript, inspired by the operational flow of quick-commerce platforms such as Blinkit and Instamart.",
+      "roles": [
+        "User",
+        "Admin",
+        "Delivery Partner"
+      ],
+      "core_features": [
+        "Complete grocery ordering lifecycle",
+        "Category-based browsing",
+        "Cart management",
+        "Location-based address auto-fill",
+        "Cash on Delivery and Stripe payments",
+        "Real-time Admin panel",
+        "Live order notifications",
+        "Analytics dashboards",
+        "Live location tracking",
+        "Real-time communication",
+        "AI-powered chat suggestions",
+        "OTP-based delivery verification"
+      ],
+      "technologies": [
+        "Next.js 16",
+        "TypeScript",
+        "MongoDB",
+        "Mongoose",
+        "Redux Toolkit",
+        "Socket.IO",
+        "Stripe",
+        "Cloudinary",
+        "Leaflet",
+        "Recharts",
+        "NextAuth",
+        "bcryptjs",
+        "Google Gemini API",
+        "Nodemailer"
+      ],
+      "github": "https://github.com/Prajwal-dev-dsa/Zestro",
+      "live": "https://zestro-zeta.vercel.app/"
+    },
+    {
+      "name": "AI Virtual Assistant",
+      "category": "Personalized AI-Powered Productivity Tool",
+      "status": "Live",
+      "description": "A personalized AI-powered virtual assistant that combines general AI queries with practical productivity features such as opening frequently used applications through voice or text commands.",
+      "core_features": [
+        "AI-powered general query handling",
+        "Voice and text commands",
+        "Opening frequently used applications",
+        "Custom assistant name",
+        "Custom avatar selection",
+        "User-uploaded avatar support"
+      ],
+      "technologies": [
+        "Node.js",
+        "Express.js",
+        "MongoDB",
+        "JWT",
+        "bcrypt",
+        "Cloudinary",
+        "React.js",
+        "Tailwind CSS",
+        "Lucide React",
+        "Google Gemini API"
+      ],
+      "github": "https://github.com/Prajwal-dev-dsa/AiVirtualAssistant",
+      "live": "https://ai-virtual-assistant-mern.onrender.com/"
+    },
+    {
+      "name": "YouTube Clone",
+      "category": "Full-Stack MERN Video Platform",
+      "status": "Live",
+      "description": "A fully functional YouTube-like video platform built from scratch with a focus on real-world workflows, clean architecture, and production-level system design.",
+      "core_features": [
+        "Email and Google OAuth authentication",
+        "Channel creation and customization",
+        "Subscription management",
+        "Videos, Shorts, Community Posts, and Playlists",
+        "Like, Dislike, Comment, Download, Save, Watch Later, and History",
+        "Personalized feeds",
+        "Dedicated subscriptions page",
+        "YouTube Studio content management",
+        "Analytics and revenue insights",
+        "AI-powered search",
+        "Text, Voice, and category-based search filtering",
+        "Responsive desktop, tablet, and mobile UI"
+      ],
+      "technologies": [
+        "Node.js",
+        "Express.js",
+        "MongoDB",
+        "Mongoose",
+        "Cloudinary",
+        "Upstash Redis",
+        "Google GenAI",
+        "JWT",
+        "bcryptjs",
+        "Helmet",
+        "CORS",
+        "React.js",
+        "Tailwind CSS",
+        "Framer Motion",
+        "Zustand",
+        "Recharts",
+        "Firebase Authentication"
+      ],
+      "internship_context": "Built as the project during the Full Stack Developer internship at QOE Technologies and Services.",
+      "github": "https://github.com/Prajwal-dev-dsa/YouTube",
+      "live": "https://youtube-rdi0.onrender.com/"
+    },
+    {
+      "name": "PixelShop",
+      "category": "Full-Stack CRUD Shopping Application",
+      "status": "Live",
+      "description": "A fully functional product management application built with the PERN stack, focused on CRUD operations and secure, responsive application behavior.",
+      "core_features": [
+        "Add products",
+        "View products",
+        "Update product details",
+        "Delete products",
+        "Responsive interface",
+        "DaisyUI-based theme support",
+        "Rate limiting and bot detection with Arcjet"
+      ],
+      "technologies": [
+        "PostgreSQL",
+        "NeonDB",
+        "Express.js",
+        "React.js",
+        "Node.js",
+        "Tailwind CSS",
+        "DaisyUI",
+        "Arcjet"
+      ],
+      "github": "https://github.com/Prajwal-dev-dsa/PixelShop",
+      "live": "https://pixel-shop-pern.onrender.com/"
+    },
+    {
+      "name": "QuickNotes",
+      "category": "Fast and Minimal Note-Taking Web App",
+      "status": "Live",
+      "description": "A web application designed for quick and convenient note-taking, focused on a clean, intuitive user interface and smooth user experience.",
+      "core_features": [
+        "Quick note-taking workflow",
+        "Responsive interface",
+        "Rate limiting to prevent server overload"
+      ],
+      "technologies": [
+        "Node.js",
+        "Express.js",
+        "MongoDB",
+        "Mongoose",
+        "Upstash Redis",
+        "React.js",
+        "Tailwind CSS",
+        "DaisyUI"
+      ],
+      "github": "https://github.com/Prajwal-dev-dsa/QuickNotes",
+      "live": "https://quick-notes-mern.onrender.com/"
+    }
+  ],
+  "technical_skills": {
+    "languages": [
+      "C++",
+      "JavaScript",
+      "TypeScript",
+      "SQL"
+    ],
+    "frontend": [
+      "HTML5",
+      "CSS3",
+      "Tailwind CSS",
+      "Bootstrap",
+      "React.js",
+      "Redux",
+      "Redux Toolkit",
+      "Next.js"
+    ],
+    "backend": [
+      "Node.js",
+      "Express.js",
+      "REST APIs",
+      "WebSocket",
+      "Socket.IO",
+      "Microservices Architecture",
+      "API Gateway"
+    ],
+    "databases_and_orm": [
+      "MongoDB",
+      "Mongoose",
+      "PostgreSQL",
+      "Prisma",
+      "Supabase",
+      "NeonDB"
+    ],
+    "ai_and_llm": [
+      "LangChain",
+      "LangGraph",
+      "Multi-Agent Orchestration",
+      "RAG",
+      "Qdrant",
+      "Groq",
+      "DeepSeek",
+      "OpenRouter",
+      "Google Gemini API",
+      "Google GenAI"
+    ],
+    "authentication_and_security": [
+      "JWT",
+      "bcrypt",
+      "bcryptjs",
+      "Firebase Authentication",
+      "NextAuth",
+      "Google OAuth",
+      "Helmet",
+      "CORS"
+    ],
+    "payments_and_storage": [
+      "Razorpay",
+      "Stripe",
+      "Cloudinary"
+    ],
+    "real_time_and_maps": [
+      "Socket.IO",
+      "ZegoCloud",
+      "WebRTC",
+      "Leaflet"
+    ],
+    "development_and_productivity_tools": [
+      "Git",
+      "GitHub",
+      "Postman",
+      "Jira",
+      "Recharts",
+      "Monaco Editor",
+      "Upstash Redis",
+      "Arcjet",
+      "Nodemailer",
+      "DaisyUI",
+      "Framer Motion",
+      "Lucide React"
+    ],
+    "code_editors": [
+      "Windsurf (Devin)",
+      "VS Code"
+    ]
+  },
+  "achievements": [
+    {
+      "title": "600+ DSA Problems Solved",
+      "details": "Solved 600+ Data Structures & Algorithms problems across LeetCode, GeeksforGeeks, and Coding Ninjas, including 330+ problems on LeetCode."
+    },
+    {
+      "title": "Top 5 Problem Solvers at Netaji Subhas University",
+      "details": "Ranked among the Top 5 problem solvers at Netaji Subhas University on GeeksforGeeks based on overall DSA coding score."
+    },
+    {
+      "title": "1st Prize — College Debugging Competition",
+      "details": "Won 1st Prize in a college-level Debugging Competition."
+    }
+  ],
+  "current_focus": [
+    "Mastering Data Structures & Algorithms in C++ for problem-solving and interview preparation",
+    "Continuing to build and ship full-stack applications",
+    "Continuing to build and ship AI-powered applications"
+  ],
+  "future_learning": [
+    "Docker",
+    "System Design",
+    "CI/CD Pipelines",
+    "AWS"
+  ],
+  "professional_preferences": {
+    "target_roles": [
+      "Software Development Engineer (SDE)",
+      "AI Engineering"
+    ],
+    "working_interests": [
+      "Full-Stack Development",
+      "Backend Engineering",
+      "AI Engineering",
+      "LLM Applications",
+      "Distributed and Microservices Systems"
+    ]
+  },
+  "knowledge_policy": {
+    "source_of_truth": "This profile is the authoritative source for factual claims about Prajwal.",
+    "rules": [
+      "Never invent companies, internships, employment, clients, technologies, certifications, achievements, project features, responsibilities, or experience.",
+      "Clearly distinguish professional experience from project experience.",
+      "Do not describe a technology as professional experience unless it is documented under an internship or other professional experience.",
+      "Do not describe a current or future learning item as established expertise.",
+      "Use project-specific technology lists when explaining how a technology was actually used.",
+      "When information is not documented, explicitly state that it is not currently documented.",
+      "When discussing a project, include its GitHub and live links when relevant so the recruiter can verify the work."
+    ]
+  }
+}
