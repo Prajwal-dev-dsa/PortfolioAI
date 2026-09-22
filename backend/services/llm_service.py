@@ -129,3 +129,45 @@ async def generate_chat_response(
         )
 
     return response.strip()
+
+
+async def stream_chat_response(
+    message: str,
+    history: list[dict[str, str]]
+):
+    client = get_client()
+
+    messages: list[dict[str, str]] = [
+        {
+            "role": "system",
+            "content": build_system_message()
+        }
+    ]
+
+    messages.extend(history[-6:])
+
+    messages.append(
+        {
+            "role": "user",
+            "content": message
+        }
+    )
+
+    stream = await client.chat.completions.create(
+        model=MODEL_NAME,
+        messages=messages,
+        temperature=0.2,
+        max_completion_tokens=512,
+        include_reasoning=False,
+        stream=True,
+    )
+
+    async for chunk in stream:
+
+        if not chunk.choices:
+            continue
+
+        delta = chunk.choices[0].delta.content
+
+        if delta:
+            yield delta

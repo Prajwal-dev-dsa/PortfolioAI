@@ -384,8 +384,6 @@ async function sendMessage() {
 
   addMessage("user", text);
 
-  // Keep the currently attached file behavior unchanged for now.
-  // Actual file processing will be implemented in the JD-analysis phase.
   clearAttachment();
   resetTextarea();
   updateSendButtonState();
@@ -394,33 +392,139 @@ async function sendMessage() {
 
   const thinkingEl = addThinkingIndicator();
 
-  // Only send previous successful conversation turns
-  // to the backend for this request.
+  // Snapshot previous conversation BEFORE adding this turn.
   const historyForRequest = [...state.conversationHistory];
 
   try {
-    const replyText = await getAssistantResponse(
-      text,
-      historyForRequest
+    console.log("[CHAT] Sending streaming request...");
+
+    // -------------------------------------------------------
+    // IMPORTANT:
+    // Start the network request FIRST.
+    // Only create the streaming UI once the request succeeds.
+    // This prevents UI helper failures from blocking fetch().
+    // -------------------------------------------------------
+    const response = await fetch(
+      `${BACKEND_BASE_URL}/api/chat/stream`,
+      {
+        method: "POST",
+
+        headers: {
+          "Content-Type": "application/json",
+        },
+
+        body: JSON.stringify({
+          message: text,
+          history: historyForRequest,
+        }),
+      }
     );
 
-    removeThinkingIndicator(thinkingEl);
+    console.log(
+      "[CHAT] Stream response:",
+      response.status
+    );
 
-    addMessage("assistant", replyText);
+    if (!response.ok) {
+      let message = "Failed to generate AI response.";
 
-    // Update conversation memory only after a successful response.
+      try {
+        const data = await response.json();
+
+        if (data?.detail) {
+          message = data.detail;
+        }
+      } catch {
+        // Keep fallback message.
+      }
+
+      throw new Error(message);
+    }
+
+    if (!response.body) {
+      throw new Error(
+        "Streaming is not supported by this browser."
+      );
+    }
+
+    const reader = response.body.getReader();
+
+    const decoder = new TextDecoder();
+
+    let fullResponse = "";
+
+    let streamingMessage = null;
+    let hasReceivedFirstChunk = false;
+
+    while (true) {
+      const { value, done } = await reader.read();
+
+      if (done) {
+        break;
+      }
+
+      const chunk = decoder.decode(
+        value,
+        { stream: true }
+      );
+
+      if (!chunk) {
+        continue;
+      }
+
+      fullResponse += chunk;
+
+      // Remove the thinking pulse ONLY when the first
+      // actual streamed content arrives.
+      if (!hasReceivedFirstChunk) {
+        hasReceivedFirstChunk = true;
+
+        removeThinkingIndicator(thinkingEl);
+
+        streamingMessage =
+          createStreamingAssistantMessage();
+      }
+
+      streamingMessage.content.innerHTML =
+        renderMarkdown(fullResponse);
+
+      scrollToLatestMessage();
+    }
+
+    // Flush any remaining decoder bytes.
+    const finalChunk = decoder.decode();
+
+    if (finalChunk) {
+      fullResponse += finalChunk;
+
+      streamingMessage.content.innerHTML =
+        renderMarkdown(fullResponse);
+
+      scrollToLatestMessage();
+    }
+
+    if (!fullResponse.trim()) {
+      throw new Error(
+        "AI backend returned an empty response."
+      );
+    }
+
+    // Save the completed conversation turn.
     state.conversationHistory.push({
       role: "user",
-      content: text
+      content: text,
     });
 
     state.conversationHistory.push({
       role: "assistant",
-      content: replyText
+      content: fullResponse,
     });
 
   } catch (error) {
-    console.error("Chat request failed:", error);
+    console.error(
+      "[CHAT] Streaming request failed:",
+      error
+    );
 
     removeThinkingIndicator(thinkingEl);
 
@@ -431,8 +535,11 @@ async function sendMessage() {
 
   } finally {
     setSendButtonLoading(false);
+
     state.isSending = false;
+
     updateSendButtonState();
+
     els.messageInput.focus();
   }
 }
@@ -501,6 +608,60 @@ function addMessage(role, content) {
   }
 
   return wrapper;
+}
+
+function createStreamingAssistantMessage() {
+  const wrapper = document.createElement("div");
+
+  wrapper.className = "message message-row-assistant";
+
+  const avatar = document.createElement("div");
+  avatar.className = "message-avatar";
+  avatar.textContent = "P";
+
+  const body = document.createElement("div");
+  body.className = "message-body";
+
+  const roleLabel = document.createElement("div");
+  roleLabel.className = "message-role";
+  roleLabel.textContent = "Prajwal AI";
+
+  const content = document.createElement("div");
+  content.className = "message-assistant-content";
+  content.setAttribute("aria-live", "polite");
+
+  body.appendChild(roleLabel);
+  body.appendChild(content);
+
+  wrapper.appendChild(avatar);
+  wrapper.appendChild(body);
+
+  els.messagesContainer.appendChild(wrapper);
+
+  renderLucideIcons();
+  scrollToLatestMessage();
+
+  if (!prefersReducedMotion) {
+    animate(
+      wrapper,
+      {
+        opacity: [0, 1],
+        transform: [
+          "translateY(8px)",
+          "translateY(0px)"
+        ]
+      },
+      {
+        duration: 0.28,
+        easing: [0.16, 1, 0.3, 1]
+      }
+    );
+  }
+
+  return {
+    wrapper,
+    content
+  };
 }
 
 function createActionButton(icon, label, onClick) {
@@ -615,6 +776,77 @@ async function getAssistantResponse(userText, history) {
   }
 
   return data.response;
+}
+
+async function streamAssistantResponse(
+  userText,
+  history,
+  onChunk
+) {
+  const response = await fetch(
+    `${BACKEND_BASE_URL}/api/chat/stream`,
+    {
+      method: "POST",
+
+      headers: {
+        "Content-Type": "application/json",
+      },
+
+      body: JSON.stringify({
+        message: userText,
+        history: history,
+      }),
+    }
+  );
+
+  if (!response.ok) {
+    let message = "Failed to start AI response stream.";
+
+    try {
+      const data = await response.json();
+
+      if (data?.detail) {
+        message = data.detail;
+      }
+    } catch {
+      // Keep fallback message.
+    }
+
+    throw new Error(message);
+  }
+
+  if (!response.body) {
+    throw new Error(
+      "Streaming is not supported by this browser."
+    );
+  }
+
+  const reader = response.body.getReader();
+
+  const decoder = new TextDecoder();
+
+  let fullResponse = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+
+    if (done) {
+      break;
+    }
+
+    const chunk = decoder.decode(
+      value,
+      { stream: true }
+    );
+
+    fullResponse += chunk;
+
+    onChunk(
+      fullResponse
+    );
+  }
+
+  return fullResponse;
 }
 
 // =============================================================
