@@ -1,14 +1,23 @@
 from pathlib import Path
 from typing import Annotated
 
+from backend.services.jd_service import (
+    compare_jd_with_profile,
+    extract_jd_requirements,
+)
+
 from fastapi import (
     APIRouter,
     File,
+    Form,
     HTTPException,
     UploadFile,
 )
 
-from backend.models.jd import ParsedDocument
+from backend.models.jd import (
+    ParsedDocument,
+    JDAnalysis,
+)
 
 from backend.parsers.docx_parser import (
     extract_docx_text,
@@ -148,3 +157,150 @@ async def parse_job_description(
         character_count=len(extracted_text),
         text=extracted_text,
     )
+
+
+@router.post(
+    "/analyze",
+    response_model=JDAnalysis,
+)
+async def analyze_job_description(
+    file: Annotated[
+        UploadFile,
+        File(description="Job description file"),
+    ],
+    message: Annotated[
+        str | None,
+        Form(),
+    ] = None,
+) -> JDAnalysis:
+
+    filename = file.filename or ""
+
+    extension = Path(filename).suffix.lower()
+
+    if extension not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Unsupported file type. "
+                "Only PDF, DOCX, and TXT files are allowed."
+            ),
+        )
+
+    contents = await file.read()
+
+    if not contents:
+        raise HTTPException(
+            status_code=400,
+            detail="The uploaded file is empty.",
+        )
+
+    if len(contents) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail="File is too large. Maximum size is 10 MB.",
+        )
+
+    from io import BytesIO
+
+    file_stream = BytesIO(contents)
+
+    try:
+
+        if extension == ".pdf":
+            extracted_text = extract_pdf_text(
+                file_stream
+            )
+
+        elif extension == ".docx":
+            extracted_text = extract_docx_text(
+                file_stream
+            )
+
+        else:
+            extracted_text = extract_txt_text(
+                file_stream
+            )
+
+    except Exception as error:
+
+        print(
+            f"[JD ANALYZE PARSE ERROR] "
+            f"{type(error).__name__}: {error}"
+        )
+
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "The job description could not be parsed."
+            ),
+        ) from error
+
+    if not extracted_text:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "No readable text could be extracted "
+                "from this document."
+            ),
+        )
+
+    try:
+
+        print("[JD ANALYZE] Extracting requirements...")
+
+        requirements = await extract_jd_requirements(
+            extracted_text
+        )
+
+        print(
+            "[JD ANALYZE] Requirement extraction successful."
+        )
+
+        print("[JD ANALYZE] Comparing with profile...")
+
+        analysis = await compare_jd_with_profile(
+            requirements,
+            user_message=message,
+        )
+
+        print(
+            "[JD ANALYZE] Profile comparison successful."
+        )
+
+        return analysis
+
+    except ValueError as error:
+
+        raise HTTPException(
+            status_code=422,
+            detail=str(error),
+        ) from error
+
+    except RuntimeError as error:
+
+        print(
+            f"[JD ANALYZE ERROR] {error}"
+        )
+
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "JD analysis failed. "
+                "Please try again."
+            ),
+        ) from error
+
+    except Exception as error:
+
+        print(
+            f"[JD ANALYZE ERROR] "
+            f"{type(error).__name__}: {error}"
+        )
+
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Unable to analyze the job description."
+            ),
+        ) from error

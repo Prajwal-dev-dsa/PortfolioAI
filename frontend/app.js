@@ -375,8 +375,11 @@ function updateSendButtonState() {
   const hasText =
     els.messageInput.value.trim().length > 0;
 
+  const hasFile =
+    !!state.attachedFile;
+
   els.sendBtn.disabled =
-    !hasText ||
+    (!hasText && !hasFile) ||
     state.isSending ||
     state.isParsingFile;
 }
@@ -384,33 +387,133 @@ function updateSendButtonState() {
 async function sendMessage() {
   const text = els.messageInput.value.trim();
 
-  if (!text || state.isSending) return;
+  // IMPORTANT:
+  // Capture the File object BEFORE clearAttachment()
+  // because clearAttachment() resets state.attachedFile.
+  const attachedFile =
+    state.attachedFile?.file || null;
+
+  // Nothing to send.
+  if (
+    (!text && !attachedFile) ||
+    state.isSending
+  ) {
+    return;
+  }
 
   state.isSending = true;
+
   showWelcomeIfFirstMessage();
 
-  addMessage("user", text);
+  // ---------------------------------------------------------
+  // User message shown in chat
+  // ---------------------------------------------------------
 
+  const userDisplayMessage = attachedFile
+    ? (
+      text
+        ? `${text}\n\nAttachment: ${attachedFile.name}`
+        : `Analyze this job description: ${attachedFile.name}`
+    )
+    : text;
+
+  addMessage(
+    "user",
+    userDisplayMessage
+  );
+
+  // Clear composer state AFTER capturing the file.
   clearAttachment();
   resetTextarea();
   updateSendButtonState();
 
   setSendButtonLoading(true);
 
-  const thinkingEl = addThinkingIndicator();
+  // Pulse stays visible until:
+  // - first streamed token (normal chat), OR
+  // - complete JD analysis response (file flow)
+  const thinkingEl =
+    addThinkingIndicator();
 
-  // Snapshot previous conversation BEFORE adding this turn.
-  const historyForRequest = [...state.conversationHistory];
+  // ---------------------------------------------------------
+  // JOB DESCRIPTION FLOW
+  // ---------------------------------------------------------
+
+  if (attachedFile) {
+    try {
+      console.log(
+        "[JD ANALYZE] Sending file for analysis..."
+      );
+
+      const analysis =
+        await analyzeJobDescription(
+          attachedFile,
+          text
+        );
+
+      console.log(
+        "[JD ANALYZE] Analysis received."
+      );
+
+      // Remove pulse only after complete
+      // structured analysis is available.
+      removeThinkingIndicator(
+        thinkingEl
+      );
+
+      addMessage(
+        "assistant",
+        formatJDAnalysisMarkdown(
+          analysis
+        )
+      );
+
+    } catch (error) {
+
+      console.error(
+        "[JD ANALYZE] Request failed:",
+        error
+      );
+
+      removeThinkingIndicator(
+        thinkingEl
+      );
+
+      addMessage(
+        "assistant",
+        error.message ||
+        "I couldn't analyze this job description right now."
+      );
+
+    } finally {
+
+      setSendButtonLoading(false);
+
+      state.isSending = false;
+      state.isParsingFile = false;
+
+      updateSendButtonState();
+
+      els.messageInput.focus();
+    }
+
+    return;
+  }
+
+  // ---------------------------------------------------------
+  // NORMAL CHAT STREAMING FLOW
+  // ---------------------------------------------------------
+
+  // Snapshot history BEFORE adding this turn.
+  const historyForRequest = [
+    ...state.conversationHistory
+  ];
 
   try {
-    console.log("[CHAT] Sending streaming request...");
+    console.log(
+      "[CHAT] Sending streaming request..."
+    );
 
-    // -------------------------------------------------------
-    // IMPORTANT:
-    // Start the network request FIRST.
-    // Only create the streaming UI once the request succeeds.
-    // This prevents UI helper failures from blocking fetch().
-    // -------------------------------------------------------
     const response = await fetch(
       `${BACKEND_BASE_URL}/api/chat/stream`,
       {
@@ -433,10 +536,12 @@ async function sendMessage() {
     );
 
     if (!response.ok) {
-      let message = "Failed to generate AI response.";
+      let message =
+        "Failed to generate AI response.";
 
       try {
-        const data = await response.json();
+        const data =
+          await response.json();
 
         if (data?.detail) {
           message = data.detail;
@@ -454,26 +559,36 @@ async function sendMessage() {
       );
     }
 
-    const reader = response.body.getReader();
+    const reader =
+      response.body.getReader();
 
-    const decoder = new TextDecoder();
+    const decoder =
+      new TextDecoder();
 
     let fullResponse = "";
 
     let streamingMessage = null;
     let hasReceivedFirstChunk = false;
 
+    // -------------------------------------------------------
+    // Read streamed AI response
+    // -------------------------------------------------------
+
     while (true) {
-      const { value, done } = await reader.read();
+      const {
+        value,
+        done
+      } = await reader.read();
 
       if (done) {
         break;
       }
 
-      const chunk = decoder.decode(
-        value,
-        { stream: true }
-      );
+      const chunk =
+        decoder.decode(
+          value,
+          { stream: true }
+        );
 
       if (!chunk) {
         continue;
@@ -481,31 +596,40 @@ async function sendMessage() {
 
       fullResponse += chunk;
 
-      // Remove the thinking pulse ONLY when the first
-      // actual streamed content arrives.
+      // Pulse disappears ONLY after
+      // actual AI content arrives.
       if (!hasReceivedFirstChunk) {
         hasReceivedFirstChunk = true;
 
-        removeThinkingIndicator(thinkingEl);
+        removeThinkingIndicator(
+          thinkingEl
+        );
 
         streamingMessage =
           createStreamingAssistantMessage();
       }
 
       streamingMessage.content.innerHTML =
-        renderMarkdown(fullResponse);
+        renderMarkdown(
+          fullResponse
+        );
 
       scrollToLatestMessage();
     }
 
-    // Flush any remaining decoder bytes.
-    const finalChunk = decoder.decode();
+    // Flush remaining decoder bytes.
+    const finalChunk =
+      decoder.decode();
 
     if (finalChunk) {
       fullResponse += finalChunk;
 
-      streamingMessage.content.innerHTML =
-        renderMarkdown(fullResponse);
+      if (streamingMessage) {
+        streamingMessage.content.innerHTML =
+          renderMarkdown(
+            fullResponse
+          );
+      }
 
       scrollToLatestMessage();
     }
@@ -516,7 +640,10 @@ async function sendMessage() {
       );
     }
 
-    // Save the completed conversation turn.
+    // -------------------------------------------------------
+    // Save completed conversation turn
+    // -------------------------------------------------------
+
     state.conversationHistory.push({
       role: "user",
       content: text,
@@ -528,12 +655,15 @@ async function sendMessage() {
     });
 
   } catch (error) {
+
     console.error(
       "[CHAT] Streaming request failed:",
       error
     );
 
-    removeThinkingIndicator(thinkingEl);
+    removeThinkingIndicator(
+      thinkingEl
+    );
 
     addMessage(
       "assistant",
@@ -541,9 +671,11 @@ async function sendMessage() {
     );
 
   } finally {
+
     setSendButtonLoading(false);
 
     state.isSending = false;
+    state.isParsingFile = false;
 
     updateSendButtonState();
 
@@ -553,7 +685,16 @@ async function sendMessage() {
 
 function setSendButtonLoading(isLoading) {
   els.sendBtn.classList.toggle("is-loading", isLoading);
-  els.sendBtn.disabled = isLoading || els.messageInput.value.trim().length === 0;
+
+  const hasText =
+    els.messageInput.value.trim().length > 0;
+
+  const hasFile =
+    !!state.attachedFile;
+
+  els.sendBtn.disabled =
+    isLoading ||
+    (!hasText && !hasFile);
 }
 
 function showWelcomeIfFirstMessage() {
@@ -869,6 +1010,105 @@ function initializeFileUpload() {
   els.attachmentRemove.addEventListener("click", clearAttachment);
 }
 
+async function analyzeJobDescription(
+  file,
+  userMessage
+) {
+  const formData = new FormData();
+
+  formData.append("file", file);
+
+  if (userMessage && userMessage.trim()) {
+    formData.append(
+      "message",
+      userMessage.trim()
+    );
+  }
+
+  const response = await fetch(
+    `${BACKEND_BASE_URL}/api/jd/analyze`,
+    {
+      method: "POST",
+      body: formData,
+    }
+  );
+
+  let data = null;
+
+  try {
+    data = await response.json();
+  } catch {
+    throw new Error(
+      "Invalid response received from JD analysis backend."
+    );
+  }
+
+  if (!response.ok) {
+    throw new Error(
+      data?.detail ||
+      "Failed to analyze the job description."
+    );
+  }
+
+  if (!data) {
+    throw new Error(
+      "JD analysis returned an empty response."
+    );
+  }
+
+  return data;
+}
+
+function formatJDAnalysisMarkdown(analysis) {
+  const formatList = (items) => {
+    if (!Array.isArray(items) || items.length === 0) {
+      return "_None identified._";
+    }
+
+    return items
+      .map((item) => `- ${item}`)
+      .join("\n");
+  };
+
+  const alignment =
+    analysis.overall_alignment
+      ? analysis.overall_alignment
+        .charAt(0)
+        .toUpperCase() +
+      analysis.overall_alignment.slice(1)
+      : "Unknown";
+
+  return `
+## Job Fit Analysis
+
+**Overall Alignment:** ${alignment}
+
+### Summary
+
+${analysis.summary}
+
+### Strong Matches
+
+${formatList(analysis.strong_matches)}
+
+### Partial Matches
+
+${formatList(analysis.partial_matches)}
+
+### Gaps
+
+${formatList(analysis.gaps)}
+
+### Relevant Projects
+
+${formatList(analysis.relevant_projects)}
+
+### Relevant Experience
+
+${formatList(analysis.relevant_experience)}
+`.trim();
+}
+
 async function handleFileSelection(e) {
   const file =
     e.target.files && e.target.files[0];
@@ -887,78 +1127,30 @@ async function handleFileSelection(e) {
     return;
   }
 
-  // Store the selected file for the current UI state.
+  if (file.size > 10 * 1024 * 1024) {
+    showTransientError(
+      "File is too large. Maximum size is 10 MB."
+    );
+
+    clearAttachment();
+    return;
+  }
+
   state.attachedFile = {
+    file,
     name: file.name,
     extension,
   };
 
   state.parsedDocument = null;
-  state.isParsingFile = true;
+  state.isParsingFile = false;
 
   renderAttachmentPreview();
 
-  // Update status text while backend parses the file.
   els.attachmentType.textContent =
-    `${extension.replace(".", "").toUpperCase()} · Processing...`;
+    `${extension.replace(".", "").toUpperCase()} · Ready to analyze`;
 
-  try {
-    const formData = new FormData();
-
-    formData.append("file", file);
-
-    const response = await fetch(
-      `${BACKEND_BASE_URL}/api/jd/parse`,
-      {
-        method: "POST",
-        body: formData,
-      }
-    );
-
-    let data = null;
-
-    try {
-      data = await response.json();
-    } catch {
-      throw new Error(
-        "Invalid response received from backend."
-      );
-    }
-
-    if (!response.ok) {
-      throw new Error(
-        data?.detail ||
-        "Failed to parse the document."
-      );
-    }
-
-    state.parsedDocument = data;
-
-    els.attachmentType.textContent =
-      `${data.file_type} · Ready`;
-
-  } catch (error) {
-
-    console.error(
-      "Document parsing failed:",
-      error
-    );
-
-    state.parsedDocument = null;
-
-    showTransientError(
-      error.message ||
-      "The document could not be parsed."
-    );
-
-    clearAttachment();
-
-  } finally {
-
-    state.isParsingFile = false;
-
-    updateSendButtonState();
-  }
+  updateSendButtonState();
 }
 
 function renderAttachmentPreview() {
