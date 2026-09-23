@@ -7,11 +7,10 @@ import { animate, stagger } from "https://cdn.jsdelivr.net/npm/motion@10.18.0/+e
 // ---------- Config ----------
 const BACKEND_BASE_URL =
   window.location.hostname === "localhost" ||
-  window.location.hostname === "127.0.0.1"
+    window.location.hostname === "127.0.0.1"
     ? "http://127.0.0.1:8000"
     : "https://portfolioai-9yzi.onrender.com";
 const THEME_STORAGE_KEY = "portfolio_ai_theme";
-const SIDEBAR_STORAGE_KEY = "portfolio_ai_sidebar";
 const MAX_TEXTAREA_HEIGHT = 160;
 const ACCEPTED_FILE_TYPES = [".pdf", ".docx", ".txt"];
 
@@ -21,6 +20,27 @@ const MAX_RECRUITER_MESSAGE_LENGTH = 2000;
 
 const CHAT_STREAM_TIMEOUT_MS = 45000;
 const JD_ANALYSIS_TIMEOUT_MS = 75000;
+
+// Wake-up screen tuning: the health check is given a short "grace"
+// window before the overlay appears, so a fast/warm backend never
+// causes a visible flash of the wake-up screen.
+const HEALTH_CHECK_TIMEOUT_MS = 1000;
+const WAKEUP_GRACE_DELAY_MS = 350;
+const WAKEUP_POLL_INTERVAL_MS = 2500;
+const WAKEUP_STATUS_ROTATION_MS = 2000;
+const WAKEUP_STATUS_MESSAGES = [
+  "Initializing…",
+  "Connecting to AI backend…",
+  "Establishing secure connection…",
+  "Waking up backend services…",
+  "Loading AI components…",
+  "Preparing the application environment…",
+  "Initializing request handling…",
+  "Checking backend availability…",
+  "Finalizing the connection…",
+  "Almost ready…",
+  "Starting your AI session…",
+];
 
 const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -33,28 +53,24 @@ const state = {
   parsedDocument: null,
   isParsingFile: false,
   activeRequestController: null,
-  mobileMediaQuery: window.matchMedia("(max-width: 900px)"),
+  wakeupVisible: false,
+  wakeupResolved: false,
 };
+
+// Timer handles kept outside `state` (not serializable app state, just
+// bookkeeping) so we never accidentally spin up duplicate loops.
+let wakeupGraceTimeoutId = null;
+let wakeupPollIntervalId = null;
+let wakeupStatusIntervalId = null;
 
 // ---------- DOM refs (populated on DOMContentLoaded) ----------
 const els = {};
 
 function cacheDom() {
   els.app = document.getElementById("app");
-  els.sidebar = document.getElementById("sidebar");
-  els.sidebarInner = document.getElementById("sidebarInner");
-  els.sidebarOverlay = document.getElementById("sidebarOverlay");
-  els.sidebarCloseBtn = document.getElementById("sidebarCloseBtn");
-  els.sidebarExpandBtn = document.getElementById("sidebarExpandBtn");
-  els.menuBtn = document.getElementById("menuBtn");
+
   els.newChatBtn = document.getElementById("newChatBtn");
-
   els.themeToggle = document.getElementById("themeToggle");
-  els.themeToggleMobile = document.getElementById("themeToggleMobile");
-
-  els.backendStatus = document.getElementById("backendStatus");
-  els.backendStatusDot = document.getElementById("backendStatusDot");
-  els.backendStatusText = document.getElementById("backendStatusText");
 
   els.chatArea = document.getElementById("chatArea");
   els.welcomeScreen = document.getElementById("welcomeScreen");
@@ -73,6 +89,11 @@ function cacheDom() {
   els.attachmentRemove = document.getElementById("attachmentRemove");
 
   els.customTooltip = document.getElementById("customTooltip");
+
+  els.wakeupScreen = document.getElementById("wakeupScreen");
+  els.wakeupPanel = document.getElementById("wakeupPanel");
+  els.wakeupMark = document.getElementById("wakeupMark");
+  els.wakeupStatusText = document.getElementById("wakeupStatusText");
 }
 
 // =============================================================
@@ -83,13 +104,12 @@ function initializeApp() {
   cacheDom();
   renderLucideIcons();
   initializeTheme();
-  initializeSidebar();
   initializeComposer();
   initializeFileUpload();
   initializeSuggestionCards();
   initializeChat();
   initializeTooltips();
-  checkBackendHealth();
+  runStartupHealthFlow();
   playWelcomeEntrance();
 }
 
@@ -109,7 +129,6 @@ function initializeTheme() {
   setTheme(initial, { persist: false });
 
   els.themeToggle.addEventListener("click", toggleTheme);
-  els.themeToggleMobile.addEventListener("click", toggleTheme);
 }
 
 function toggleTheme() {
@@ -134,166 +153,149 @@ function setTheme(theme, { persist = true } = {}) {
 }
 
 // =============================================================
-// SIDEBAR
+// BACKEND HEALTH + SERVER WAKE-UP SCREEN
 // =============================================================
 
-function initializeSidebar() {
-  const isMobile = state.mobileMediaQuery.matches;
-  const saved = safeGetItem(SIDEBAR_STORAGE_KEY);
-
-  if (isMobile) {
-    // Mobile always starts as a closed drawer, regardless of any
-    // desktop-collapsed state saved previously — the two contexts
-    // must never trap each other.
-    els.sidebar.classList.remove("is-collapsed");
-    closeSidebar({ persist: false, animate: false });
-  } else {
-    els.sidebarOverlay.classList.remove("is-visible");
-    if (saved === "closed") {
-      setSidebarCollapsed(true, { animate: false });
-    } else {
-      setSidebarCollapsed(false, { animate: false });
-    }
-  }
-
-  els.menuBtn.addEventListener("click", () => openSidebar());
-  els.sidebarCloseBtn.addEventListener("click", () => closeSidebar());
-  els.sidebarExpandBtn.addEventListener("click", () => openSidebar());
-  els.sidebarOverlay.addEventListener("click", () => closeSidebar());
-
-  state.mobileMediaQuery.addEventListener("change", (e) => {
-    if (e.matches) {
-      // switched to mobile: drop desktop collapse concept, start closed drawer
-      els.sidebar.classList.remove("is-collapsed");
-      els.sidebarExpandBtn.classList.remove("is-visible");
-      els.sidebarExpandBtn.hidden = true;
-      closeSidebar({ persist: false, animate: false });
-    } else {
-      // switched to desktop: overlay must never linger; restore saved collapse state
-      els.sidebar.classList.remove("is-open");
-      els.sidebarOverlay.classList.remove("is-visible");
-      const savedNow = safeGetItem(SIDEBAR_STORAGE_KEY);
-      setSidebarCollapsed(savedNow === "closed", { animate: false });
-    }
-  });
-
-  // Escape closes the mobile drawer
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && state.mobileMediaQuery.matches) {
-      closeSidebar();
-    }
-  });
-}
-
-function openSidebar() {
-  hideTooltip(); // clear stale tooltips
-  const isMobile = state.mobileMediaQuery.matches;
-
-  if (isMobile) {
-    els.sidebar.classList.add("is-open");
-    els.sidebarOverlay.classList.add("is-visible");
-    if (!prefersReducedMotion) {
-      animate(els.sidebarOverlay, { opacity: [0, 1] }, { duration: 0.22, easing: "ease-out" });
-      animate(els.sidebar, { transform: ["translateX(-100%)", "translateX(0%)"] }, {
-        duration: 0.3,
-        easing: [0.4, 0, 0.2, 1],
-      });
-    }
-  } else {
-    setSidebarCollapsed(false, { animate: true });
-  }
-
-  safeSetItem(SIDEBAR_STORAGE_KEY, "open");
-}
-
-function closeSidebar({ persist = true, animate: shouldAnimate = true } = {}) {
-  hideTooltip(); // clear stale tooltips
-  const isMobile = state.mobileMediaQuery.matches;
-
-  if (isMobile) {
-    const finish = () => {
-      els.sidebar.classList.remove("is-open");
-      els.sidebarOverlay.classList.remove("is-visible");
-    };
-
-    if (shouldAnimate && !prefersReducedMotion) {
-      animate(els.sidebarOverlay, { opacity: [1, 0] }, { duration: 0.2, easing: "ease-in" });
-      animate(els.sidebar, { transform: ["translateX(0%)", "translateX(-100%)"] }, {
-        duration: 0.26,
-        easing: [0.4, 0, 0.2, 1],
-      }).finished.then(finish);
-    } else {
-      finish();
-    }
-  } else {
-    setSidebarCollapsed(true, { animate: shouldAnimate });
-  }
-
-  if (persist) {
-    safeSetItem(SIDEBAR_STORAGE_KEY, "closed");
-  }
-}
-
-// Desktop-only: collapses the sidebar to zero width so the main
-// chat area reclaims the space, rather than merely hiding it.
-function setSidebarCollapsed(collapsed, { animate: shouldAnimate = true } = {}) {
-  hideTooltip(); // clear stale tooltips on layout shift
-  els.sidebar.classList.toggle("is-collapsed", collapsed);
-
-  if (collapsed) {
-    els.sidebarExpandBtn.hidden = false;
-    requestAnimationFrame(() => els.sidebarExpandBtn.classList.add("is-visible"));
-  } else {
-    els.sidebarExpandBtn.classList.remove("is-visible");
-    setTimeout(() => {
-      if (!els.sidebar.classList.contains("is-collapsed")) {
-        els.sidebarExpandBtn.hidden = true;
-      }
-    }, 200);
-  }
-
-  if (shouldAnimate && !prefersReducedMotion) {
-    animate(
-      els.sidebarInner,
-      { opacity: collapsed ? [1, 0] : [0, 1] },
-      { duration: collapsed ? 0.15 : 0.22, delay: collapsed ? 0 : 0.08, easing: "ease-out" }
-    );
-  }
-}
-
-// =============================================================
-// BACKEND HEALTH
-// =============================================================
-
-async function checkBackendHealth() {
+// Single source of truth for pinging the existing health endpoint.
+async function pingBackendHealth(timeoutMs = HEALTH_CHECK_TIMEOUT_MS) {
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 4000);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
     const res = await fetch(`${BACKEND_BASE_URL}/api/health`, {
       method: "GET",
       signal: controller.signal,
     });
-    clearTimeout(timeout);
 
-    if (res.ok) {
-      setBackendStatus(true);
-    } else {
-      setBackendStatus(false);
-    }
+    clearTimeout(timeout);
+    return res.ok;
   } catch (err) {
-    setBackendStatus(false);
+    return false;
   }
 }
 
-function setBackendStatus(isOnline) {
-  els.backendStatus.classList.toggle("is-online", isOnline);
-  els.backendStatus.classList.toggle("is-offline", !isOnline);
-  els.backendStatusText.textContent = isOnline ? "AI backend connected" : "Backend unavailable";
-  els.backendStatus.setAttribute(
-    "data-tooltip",
-    isOnline ? "AI backend connected" : "Backend unavailable — running in demo mode"
-  );
+// Runs once on initial load.
+async function runStartupHealthFlow() {
+  state.wakeupResolved = false;
+
+  wakeupGraceTimeoutId = setTimeout(() => {
+    if (!state.wakeupResolved) {
+      showWakeupScreen();
+    }
+  }, WAKEUP_GRACE_DELAY_MS);
+
+  const healthy = await pingBackendHealth();
+
+  state.wakeupResolved = true;
+  clearTimeout(wakeupGraceTimeoutId);
+  wakeupGraceTimeoutId = null;
+
+  if (healthy) {
+    hideWakeupScreen();
+    return;
+  }
+
+  showWakeupScreen();
+  startWakeupPolling();
+}
+
+function startWakeupPolling() {
+  // Guard against duplicate polling loops.
+  if (wakeupPollIntervalId) return;
+
+  wakeupPollIntervalId = setInterval(async () => {
+    const healthy = await pingBackendHealth();
+
+    if (healthy) {
+      clearInterval(wakeupPollIntervalId);
+      wakeupPollIntervalId = null;
+      hideWakeupScreen();
+    }
+  }, WAKEUP_POLL_INTERVAL_MS);
+}
+
+function showWakeupScreen() {
+  if (!els.wakeupScreen || state.wakeupVisible) return;
+
+  state.wakeupVisible = true;
+  els.wakeupScreen.hidden = false;
+  renderLucideIcons();
+
+  requestAnimationFrame(() => {
+    els.wakeupScreen.classList.add("is-visible");
+  });
+
+  startWakeupStatusRotation();
+
+  if (!prefersReducedMotion) {
+    animate(
+      els.wakeupPanel,
+      {
+        opacity: [0, 1],
+        transform: ["translateY(14px) scale(0.98)", "translateY(0px) scale(1)"],
+      },
+      { duration: 0.5, easing: [0.16, 1, 0.3, 1] }
+    );
+
+    if (els.wakeupMark) {
+      animate(
+        els.wakeupMark,
+        { opacity: [0, 1], transform: ["scale(0.85)", "scale(1)"] },
+        { duration: 0.45, delay: 0.08, easing: [0.16, 1, 0.3, 1] }
+      );
+    }
+  }
+}
+
+function hideWakeupScreen() {
+  if (!els.wakeupScreen || !state.wakeupVisible) return;
+
+  stopWakeupStatusRotation();
+
+  const finish = () => {
+    els.wakeupScreen.hidden = true;
+    els.wakeupScreen.classList.remove("is-visible");
+    state.wakeupVisible = false;
+  };
+
+  if (!prefersReducedMotion) {
+    animate(els.wakeupScreen, { opacity: [1, 0] }, { duration: 0.4, easing: "ease-in" })
+      .finished.then(finish);
+  } else {
+    finish();
+  }
+}
+
+function startWakeupStatusRotation() {
+  if (!els.wakeupStatusText) return;
+
+  let index = 0;
+  els.wakeupStatusText.textContent = WAKEUP_STATUS_MESSAGES[0];
+
+  if (wakeupStatusIntervalId) return;
+
+  wakeupStatusIntervalId = setInterval(() => {
+    index = (index + 1) % WAKEUP_STATUS_MESSAGES.length;
+    updateWakeupStatusText(WAKEUP_STATUS_MESSAGES[index]);
+  }, WAKEUP_STATUS_ROTATION_MS);
+}
+
+function stopWakeupStatusRotation() {
+  clearInterval(wakeupStatusIntervalId);
+  wakeupStatusIntervalId = null;
+}
+
+function updateWakeupStatusText(text) {
+  if (!els.wakeupStatusText) return;
+
+  if (!prefersReducedMotion) {
+    animate(els.wakeupStatusText, { opacity: [1, 0] }, { duration: 0.15 }).finished.then(() => {
+      els.wakeupStatusText.textContent = text;
+      animate(els.wakeupStatusText, { opacity: [0, 1] }, { duration: 0.25 });
+    });
+  } else {
+    els.wakeupStatusText.textContent = text;
+  }
 }
 
 // =============================================================
@@ -363,7 +365,6 @@ function initializeComposer() {
       e.preventDefault();
       sendMessage();
     }
-    // Shift+Enter: default behavior (newline) is preserved.
   });
 
   updateSendButtonState();
@@ -398,12 +399,8 @@ function updateSendButtonState() {
 
 async function sendMessage() {
   const text = els.messageInput.value.trim();
+  const attachedFile = state.attachedFile?.file || null;
 
-  // Capture the File object BEFORE clearAttachment().
-  const attachedFile =
-    state.attachedFile?.file || null;
-
-  // No input to send.
   if (
     (!text && !attachedFile) ||
     state.isSending
@@ -411,7 +408,6 @@ async function sendMessage() {
     return;
   }
 
-  // Client-side message limits.
   if (!attachedFile && text.length > MAX_CHAT_MESSAGE_LENGTH) {
     showTransientError(
       `Message is too long. Maximum length is ${MAX_CHAT_MESSAGE_LENGTH} characters.`
@@ -433,14 +429,10 @@ async function sendMessage() {
 
   showWelcomeIfFirstMessage();
 
-  // ---------------------------------------------------------
-  // User message shown in chat
-  // ---------------------------------------------------------
-
   const userDisplayMessage = attachedFile
     ? (
       text
-        ? `${text}\n\nAttachment: ${attachedFile.name}`
+        ? `${text}\n\nAttachment:${attachedFile.name}`
         : `Analyze this job description: ${attachedFile.name}`
     )
     : text;
@@ -450,26 +442,16 @@ async function sendMessage() {
     userDisplayMessage
   );
 
-  // Clear composer state AFTER capturing the file.
   clearAttachment();
   resetTextarea();
   updateSendButtonState();
 
   setSendButtonLoading(true);
 
-  // One controller owns the current request.
-  // New Chat can abort it safely.
-  const requestController =
-    new AbortController();
+  const requestController = new AbortController();
+  state.activeRequestController = requestController;
 
-  state.activeRequestController =
-    requestController;
-
-  // Pulse stays visible until:
-  // - first streamed token (normal chat), OR
-  // - complete JD analysis response (file flow)
-  const thinkingEl =
-    addThinkingIndicator();
+  const thinkingEl = addThinkingIndicator();
 
   // ---------------------------------------------------------
   // JOB DESCRIPTION FLOW
@@ -477,73 +459,43 @@ async function sendMessage() {
 
   if (attachedFile) {
     try {
-      console.log(
-        "[JD ANALYZE] Sending file for analysis..."
+      console.log("[JD ANALYZE] Sending file for analysis...");
+
+      const analysis = await analyzeJobDescription(
+        attachedFile,
+        text,
+        requestController
       );
 
-      const analysis =
-        await analyzeJobDescription(
-          attachedFile,
-          text,
-          requestController
-        );
+      console.log("[JD ANALYZE] Analysis received.");
 
-      console.log(
-        "[JD ANALYZE] Analysis received."
-      );
-
-      // Remove pulse only after complete
-      // structured analysis is available.
-      removeThinkingIndicator(
-        thinkingEl
-      );
-
-      addMessage(
-        "assistant",
-        formatJDAnalysisMarkdown(
-          analysis
-        )
-      );
+      removeThinkingIndicator(thinkingEl);
+      addMessage("assistant", formatJDAnalysisMarkdown(analysis));
 
     } catch (error) {
-      // If New Chat intentionally cancelled this request,
-      // do not insert an error message into the new chat.
       const wasCancelledByReset =
         error?.name === "AbortError" &&
         state.activeRequestController !== requestController;
 
       if (!wasCancelledByReset) {
-        console.error(
-          "[JD ANALYZE] Request failed:",
-          error
-        );
-
-        removeThinkingIndicator(
-          thinkingEl
-        );
-
+        console.error("[JD ANALYZE] Request failed:", error);
+        removeThinkingIndicator(thinkingEl);
         addMessage(
           "assistant",
-          error.message ||
-          "I couldn't analyze this job description right now."
+          error.message || "I couldn't analyze this job description right now."
         );
       }
-
     } finally {
-      if (
-        state.activeRequestController === requestController
-      ) {
+      if (state.activeRequestController === requestController) {
         state.activeRequestController = null;
         state.isSending = false;
         state.isParsingFile = false;
 
         setSendButtonLoading(false);
         updateSendButtonState();
-
         els.messageInput.focus();
       }
     }
-
     return;
   }
 
@@ -551,183 +503,92 @@ async function sendMessage() {
   // NORMAL CHAT STREAMING FLOW
   // ---------------------------------------------------------
 
-  // Snapshot history BEFORE adding this turn.
-  const historyForRequest = [
-    ...state.conversationHistory
-  ];
-
+  const historyForRequest = [...state.conversationHistory];
   let streamTimeoutId = null;
 
   const resetStreamTimeout = () => {
     clearTimeout(streamTimeoutId);
-
-    streamTimeoutId =
-      setTimeout(() => {
-        requestController.abort();
-      }, CHAT_STREAM_TIMEOUT_MS);
+    streamTimeoutId = setTimeout(() => {
+      requestController.abort();
+    }, CHAT_STREAM_TIMEOUT_MS);
   };
 
   try {
-    console.log(
-      "[CHAT] Sending streaming request..."
-    );
-
+    console.log("[CHAT] Sending streaming request...");
     resetStreamTimeout();
 
-    const response = await fetch(
-      `${BACKEND_BASE_URL}/api/chat/stream`,
-      {
-        method: "POST",
+    const response = await fetch(`${BACKEND_BASE_URL}/api/chat/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: requestController.signal,
+      body: JSON.stringify({
+        message: text,
+        history: historyForRequest,
+      }),
+    });
 
-        headers: {
-          "Content-Type": "application/json",
-        },
-
-        signal:
-          requestController.signal,
-
-        body: JSON.stringify({
-          message: text,
-          history: historyForRequest,
-        }),
-      }
-    );
-
-    console.log(
-      "[CHAT] Stream response:",
-      response.status
-    );
+    console.log("[CHAT] Stream response:", response.status);
 
     if (!response.ok) {
-      let message =
-        "Failed to generate AI response.";
-
+      let message = "Failed to generate AI response.";
       try {
-        const data =
-          await response.json();
-
+        const data = await response.json();
         if (data?.detail) {
           message = data.detail;
         }
-      } catch {
-        // Keep fallback message.
-      }
-
+      } catch { }
       throw new Error(message);
     }
 
     if (!response.body) {
-      throw new Error(
-        "Streaming is not supported by this browser."
-      );
+      throw new Error("Streaming is not supported by this browser.");
     }
 
-    const reader =
-      response.body.getReader();
-
-    const decoder =
-      new TextDecoder();
-
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
     let fullResponse = "";
-
     let streamingMessage = null;
     let hasReceivedFirstChunk = false;
 
-    // -------------------------------------------------------
-    // Read streamed AI response
-    // -------------------------------------------------------
-
     while (true) {
-      const {
-        value,
-        done
-      } = await reader.read();
-
-      if (done) {
-        break;
-      }
+      const { value, done } = await reader.read();
+      if (done) break;
 
       resetStreamTimeout();
-
-      const chunk =
-        decoder.decode(
-          value,
-          { stream: true }
-        );
-
-      if (!chunk) {
-        continue;
-      }
+      const chunk = decoder.decode(value, { stream: true });
+      if (!chunk) continue;
 
       fullResponse += chunk;
 
-      // Pulse disappears ONLY after actual
-      // AI content arrives.
       if (!hasReceivedFirstChunk) {
         hasReceivedFirstChunk = true;
-
-        removeThinkingIndicator(
-          thinkingEl
-        );
-
-        streamingMessage =
-          createStreamingAssistantMessage();
+        removeThinkingIndicator(thinkingEl);
+        streamingMessage = createStreamingAssistantMessage();
       }
 
-      streamingMessage.content.innerHTML =
-        renderMarkdown(
-          fullResponse
-        );
-
+      streamingMessage.content.innerHTML = renderMarkdown(fullResponse);
       scrollToLatestMessage();
     }
 
-    // Flush remaining decoder bytes.
-    const finalChunk =
-      decoder.decode();
-
+    const finalChunk = decoder.decode();
     if (finalChunk) {
       fullResponse += finalChunk;
 
       if (!streamingMessage) {
-        // Extremely defensive fallback:
-        // if content arrived only during decoder flush,
-        // create the assistant message now.
-        removeThinkingIndicator(
-          thinkingEl
-        );
-
-        streamingMessage =
-          createStreamingAssistantMessage();
+        removeThinkingIndicator(thinkingEl);
+        streamingMessage = createStreamingAssistantMessage();
       }
 
-      streamingMessage.content.innerHTML =
-        renderMarkdown(
-          fullResponse
-        );
-
+      streamingMessage.content.innerHTML = renderMarkdown(fullResponse);
       scrollToLatestMessage();
     }
 
     if (!fullResponse.trim()) {
-      throw new Error(
-        "AI backend returned an empty response."
-      );
+      throw new Error("AI backend returned an empty response.");
     }
 
-    // -------------------------------------------------------
-    // Save completed conversation turn
-    // -------------------------------------------------------
-
-    state.conversationHistory.push({
-      role: "user",
-      content: text,
-    });
-
-    state.conversationHistory.push({
-      role: "assistant",
-      content: fullResponse,
-    });
+    state.conversationHistory.push({ role: "user", content: text });
+    state.conversationHistory.push({ role: "assistant", content: fullResponse });
 
   } catch (error) {
     const wasCancelledByReset =
@@ -735,57 +596,35 @@ async function sendMessage() {
       state.activeRequestController !== requestController;
 
     if (!wasCancelledByReset) {
-      console.error(
-        "[CHAT] Streaming request failed:",
-        error
-      );
-
-      removeThinkingIndicator(
-        thinkingEl
-      );
+      console.error("[CHAT] Streaming request failed:", error);
+      removeThinkingIndicator(thinkingEl);
 
       const message =
         error?.name === "AbortError"
           ? "The AI response timed out. Please try again."
           : "I couldn't reach the AI backend right now. Please try again in a moment.";
 
-      addMessage(
-        "assistant",
-        message
-      );
+      addMessage("assistant", message);
     }
-
   } finally {
     clearTimeout(streamTimeoutId);
 
-    if (
-      state.activeRequestController === requestController
-    ) {
+    if (state.activeRequestController === requestController) {
       state.activeRequestController = null;
-
       setSendButtonLoading(false);
-
       state.isSending = false;
       state.isParsingFile = false;
-
       updateSendButtonState();
-
       els.messageInput.focus();
     }
   }
 }
 
 function setSendButtonLoading(isLoading) {
-  els.sendBtn.classList.toggle(
-    "is-loading",
-    isLoading
-  );
+  els.sendBtn.classList.toggle("is-loading", isLoading);
 
-  const hasText =
-    els.messageInput.value.trim().length > 0;
-
-  const hasFile =
-    !!state.attachedFile;
+  const hasText = els.messageInput.value.trim().length > 0;
+  const hasFile = !!state.attachedFile;
 
   els.sendBtn.disabled =
     isLoading ||
@@ -796,7 +635,6 @@ function setSendButtonLoading(isLoading) {
 function showWelcomeIfFirstMessage() {
   if (state.hasMessages) return;
   state.hasMessages = true;
-
   els.welcomeScreen.style.display = "none";
   els.messagesContainer.classList.add("is-active");
 }
@@ -856,7 +694,6 @@ function addMessage(role, content) {
 
 function createStreamingAssistantMessage() {
   const wrapper = document.createElement("div");
-
   wrapper.className = "message message-row-assistant";
 
   const avatar = document.createElement("div");
@@ -881,31 +718,18 @@ function createStreamingAssistantMessage() {
   wrapper.appendChild(body);
 
   els.messagesContainer.appendChild(wrapper);
-
   renderLucideIcons();
   scrollToLatestMessage();
 
   if (!prefersReducedMotion) {
     animate(
       wrapper,
-      {
-        opacity: [0, 1],
-        transform: [
-          "translateY(8px)",
-          "translateY(0px)"
-        ]
-      },
-      {
-        duration: 0.28,
-        easing: [0.16, 1, 0.3, 1]
-      }
+      { opacity: [0, 1], transform: ["translateY(8px)", "translateY(0px)"] },
+      { duration: 0.28, easing: [0.16, 1, 0.3, 1] }
     );
   }
 
-  return {
-    wrapper,
-    content
-  };
+  return { wrapper, content };
 }
 
 function createActionButton(icon, label, onClick) {
@@ -954,7 +778,6 @@ function scrollToLatestMessage() {
 }
 
 function resetChat() {
-  // Cancel any in-flight request before clearing the chat.
   if (state.activeRequestController) {
     state.activeRequestController.abort();
     state.activeRequestController = null;
@@ -972,10 +795,6 @@ function resetChat() {
   resetTextarea();
   updateSendButtonState();
 
-  if (state.mobileMediaQuery.matches) {
-    closeSidebar();
-  }
-
   if (!prefersReducedMotion) {
     animate(
       els.welcomeScreen,
@@ -992,24 +811,13 @@ function resetChat() {
 // =============================================================
 
 async function getAssistantResponse(userText, history) {
-  const response = await fetch(
-    `${BACKEND_BASE_URL}/api/chat`,
-    {
-      method: "POST",
-
-      headers: {
-        "Content-Type": "application/json",
-      },
-
-      body: JSON.stringify({
-        message: userText,
-        history: history,
-      }),
-    }
-  );
+  const response = await fetch(`${BACKEND_BASE_URL}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message: userText, history: history }),
+  });
 
   let data = null;
-
   try {
     data = await response.json();
   } catch (error) {
@@ -1017,9 +825,7 @@ async function getAssistantResponse(userText, history) {
   }
 
   if (!response.ok) {
-    throw new Error(
-      data?.detail || "Failed to generate AI response."
-    );
+    throw new Error(data?.detail || "Failed to generate AI response.");
   }
 
   if (!data?.response) {
@@ -1029,167 +835,54 @@ async function getAssistantResponse(userText, history) {
   return data.response;
 }
 
-async function streamAssistantResponse(
-  userText,
-  history,
-  onChunk,
-  signal = undefined
-) {
-  const response = await fetch(
-    `${BACKEND_BASE_URL}/api/chat/stream`,
-    {
-      method: "POST",
-
-      headers: {
-        "Content-Type": "application/json",
-      },
-
-      signal,
-
-      body: JSON.stringify({
-        message: userText,
-        history: history,
-      }),
-    }
-  );
-
-  if (!response.ok) {
-    let message = "Failed to start AI response stream.";
-
-    try {
-      const data = await response.json();
-
-      if (data?.detail) {
-        message = data.detail;
-      }
-    } catch {
-      // Keep fallback message.
-    }
-
-    throw new Error(message);
-  }
-
-  if (!response.body) {
-    throw new Error(
-      "Streaming is not supported by this browser."
-    );
-  }
-
-  const reader = response.body.getReader();
-
-  const decoder = new TextDecoder();
-
-  let fullResponse = "";
-
-  while (true) {
-    const { value, done } = await reader.read();
-
-    if (done) {
-      break;
-    }
-
-    const chunk = decoder.decode(
-      value,
-      { stream: true }
-    );
-
-    fullResponse += chunk;
-
-    onChunk(
-      fullResponse
-    );
-  }
-
-  return fullResponse;
-}
-
 // =============================================================
 // FILE ATTACHMENT
 // =============================================================
 
 function initializeFileUpload() {
-  els.attachBtn.addEventListener("click", () => {
-    els.fileInput.click();
-  });
-
+  els.attachBtn.addEventListener("click", () => els.fileInput.click());
   els.fileInput.addEventListener("change", handleFileSelection);
   els.attachmentRemove.addEventListener("click", clearAttachment);
 }
 
-async function analyzeJobDescription(
-  file,
-  userMessage,
-  requestController
-) {
+async function analyzeJobDescription(file, userMessage, requestController) {
   const formData = new FormData();
+  formData.append("file", file);
 
-  formData.append(
-    "file",
-    file
-  );
-
-  if (
-    userMessage &&
-    userMessage.trim()
-  ) {
-    formData.append(
-      "message",
-      userMessage.trim()
-    );
+  if (userMessage && userMessage.trim()) {
+    formData.append("message", userMessage.trim());
   }
 
-  const timeoutId =
-    setTimeout(() => {
-      requestController.abort();
-    }, JD_ANALYSIS_TIMEOUT_MS);
+  const timeoutId = setTimeout(() => {
+    requestController.abort();
+  }, JD_ANALYSIS_TIMEOUT_MS);
 
   try {
-    const response = await fetch(
-      `${BACKEND_BASE_URL}/api/jd/analyze`,
-      {
-        method: "POST",
-        body: formData,
-        signal:
-          requestController.signal,
-      }
-    );
+    const response = await fetch(`${BACKEND_BASE_URL}/api/jd/analyze`, {
+      method: "POST",
+      body: formData,
+      signal: requestController.signal,
+    });
 
     let data = null;
-
     try {
       data = await response.json();
     } catch {
-      throw new Error(
-        "Invalid response received from JD analysis backend."
-      );
+      throw new Error("Invalid response received from JD analysis backend.");
     }
 
     if (!response.ok) {
-      throw new Error(
-        data?.detail ||
-        "Failed to analyze the job description."
-      );
+      throw new Error(data?.detail || "Failed to analyze the job description.");
     }
 
     if (!data) {
-      throw new Error(
-        "JD analysis returned an empty response."
-      );
+      throw new Error("JD analysis returned an empty response.");
     }
 
     return data;
-
   } catch (error) {
-    if (
-      error?.name === "AbortError"
-    ) {
-      // The caller distinguishes intentional New Chat
-      // cancellation from a timeout by checking controller identity.
-      throw error;
-    }
-
+    if (error?.name === "AbortError") throw error;
     throw error;
-
   } finally {
     clearTimeout(timeoutId);
   }
@@ -1197,22 +890,13 @@ async function analyzeJobDescription(
 
 function formatJDAnalysisMarkdown(analysis) {
   const formatList = (items) => {
-    if (!Array.isArray(items) || items.length === 0) {
-      return "_None identified._";
-    }
-
-    return items
-      .map((item) => `- ${item}`)
-      .join("\n");
+    if (!Array.isArray(items) || items.length === 0) return "_None identified._";
+    return items.map((item) => `- ${item}`).join("\n");
   };
 
-  const alignment =
-    analysis.overall_alignment
-      ? analysis.overall_alignment
-        .charAt(0)
-        .toUpperCase() +
-      analysis.overall_alignment.slice(1)
-      : "Unknown";
+  const alignment = analysis.overall_alignment
+    ? analysis.overall_alignment.charAt(0).toUpperCase() + analysis.overall_alignment.slice(1)
+    : "Unknown";
 
   return `
 ## Job Fit Analysis
@@ -1246,46 +930,29 @@ ${formatList(analysis.relevant_experience)}
 }
 
 function handleFileSelection(e) {
-  const file =
-    e.target.files && e.target.files[0];
-
+  const file = e.target.files && e.target.files[0];
   if (!file) return;
 
-  const extension =
-    `.${file.name.split(".").pop().toLowerCase()}`;
+  const extension = `.${file.name.split(".").pop().toLowerCase()}`;
 
   if (!ACCEPTED_FILE_TYPES.includes(extension)) {
-    showTransientError(
-      `Unsupported file type. Please attach a ${ACCEPTED_FILE_TYPES.join(", ")} file.`
-    );
-
+    showTransientError(`Unsupported file type. Please attach a ${ACCEPTED_FILE_TYPES.join(", ")} file.`);
     clearAttachment();
     return;
   }
 
   if (file.size > MAX_FILE_SIZE_BYTES) {
-    showTransientError(
-      "File is too large. Maximum size is 10 MB."
-    );
-
+    showTransientError("File is too large. Maximum size is 10 MB.");
     clearAttachment();
     return;
   }
 
-  state.attachedFile = {
-    file,
-    name: file.name,
-    extension,
-  };
-
+  state.attachedFile = { file, name: file.name, extension };
   state.parsedDocument = null;
   state.isParsingFile = false;
 
   renderAttachmentPreview();
-
-  els.attachmentType.textContent =
-    `${extension.replace(".", "").toUpperCase()} · Ready to analyze`;
-
+  els.attachmentType.textContent = `${extension.replace(".", "").toUpperCase()} · Ready to analyze`;
   updateSendButtonState();
 }
 
@@ -1294,7 +961,6 @@ function renderAttachmentPreview() {
     hideAttachmentPreview();
     return;
   }
-
   els.attachmentName.textContent = state.attachedFile.name;
   els.attachmentType.textContent = `${state.attachedFile.extension.replace(".", "").toUpperCase()} · Ready to analyze`;
   showAttachmentPreview();
@@ -1331,20 +997,15 @@ function hideAttachmentPreview() {
 
 function clearAttachment() {
   hideTooltip();
-
   state.attachedFile = null;
   state.parsedDocument = null;
   state.isParsingFile = false;
-
   hideAttachmentPreview();
-
   els.fileInput.value = "";
-
   updateSendButtonState();
 }
 
 function showTransientError(message) {
-  // Lightweight, non-blocking error surface — avoids raw browser alerts.
   const toast = document.createElement("div");
   toast.textContent = message;
   toast.style.cssText = `
@@ -1376,163 +1037,54 @@ function showTransientError(message) {
 async function copyToClipboard(text) {
   try {
     await navigator.clipboard.writeText(text);
-  } catch (err) {
-    // fail silently and gracefully — clipboard API can be blocked
-  }
+  } catch (err) { }
 }
 
 // =============================================================
 // LIGHTWEIGHT MARKDOWN RENDERER
-// (headings, bold, italic, lists, inline code, code blocks, links, blockquotes)
 // =============================================================
 
 function escapeHtml(str) {
-  return str
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 function renderInline(text) {
   let out = escapeHtml(text);
-
-  // ---------------------------------------------------------
-  // Protect inline code so URLs/emails/phone numbers inside
-  // code blocks are not converted into clickable links.
-  // ---------------------------------------------------------
   const codePlaceholders = [];
 
   out = out.replace(/`([^`]+)`/g, (_, code) => {
     const index = codePlaceholders.length;
-
     codePlaceholders.push(`<code>${code}</code>`);
-
     return `@@CODE_${index}@@`;
   });
 
-
-  // ---------------------------------------------------------
-  // Protect Markdown links.
-  // Supports:
-  // https://
-  // http://
-  // mailto:
-  // tel:
-  // ---------------------------------------------------------
   const linkPlaceholders = [];
+  out = out.replace(/\[([^\]]+)\]\(((?:https?:\/\/\vert{}mailto:\vert{}tel:)[^\s)]+)\)/g, (_, label, url) => {
+    const index = linkPlaceholders.length;
+    linkPlaceholders.push(`<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`);
+    return `@@LINK_${index}@@`;
+  });
 
-  out = out.replace(
-    /\[([^\]]+)\]\(((?:https?:\/\/|mailto:|tel:)[^\s)]+)\)/g,
-    (_, label, url) => {
-      const index = linkPlaceholders.length;
+  out = out.replace(/https?:\/\/[^\s<]+/g, (url) => {
+    const trailingMatch = url.match(/[.,!?;:]+$/);
+    const trailing = trailingMatch ? trailingMatch[0] : "";
+    const cleanUrl = trailing ? url.slice(0, -trailing.length) : url;
+    return `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer">${cleanUrl}</a>${trailing}`;
+  });
 
-      linkPlaceholders.push(`
-        <a
-          href="${url}"
-          target="_blank"
-          rel="noopener noreferrer"
-        >${label}</a>
-      `);
+  out = out.replace(/(?<![\w.-])([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})(?![\w.-])/g, '<a href="mailto:$1">$1</a>');
 
-      return `@@LINK_${index}@@`;
-    }
-  );
+  out = out.replace(/(?<![\d])(\+91[\s-]?)?[6-9]\d{3}[\s-]?\d{3}[\s-]?\d{3}(?![\d])/g, (phone) => {
+    const digits = phone.replace(/\D/g, "");
+    const internationalNumber = phone.trim().startsWith("+91") ? `+${digits}` : `+91${digits}`;
+    return `<a href="tel:${internationalNumber}">${phone}</a>`;
+  });
 
+  out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  out = out.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "<em>$1</em>");
 
-  // ---------------------------------------------------------
-  // Convert plain HTTP/HTTPS URLs into clickable links.
-  // ---------------------------------------------------------
-  out = out.replace(
-    /https?:\/\/[^\s<]+/g,
-    (url) => {
-      const trailingMatch = url.match(/[.,!?;:]+$/);
-
-      const trailing = trailingMatch
-        ? trailingMatch[0]
-        : "";
-
-      const cleanUrl = trailing
-        ? url.slice(0, -trailing.length)
-        : url;
-
-      return `
-        <a
-          href="${cleanUrl}"
-          target="_blank"
-          rel="noopener noreferrer"
-        >${cleanUrl}</a>${trailing}
-      `;
-    }
-  );
-
-
-  // ---------------------------------------------------------
-  // Convert plain email addresses into clickable mailto links.
-  // ---------------------------------------------------------
-  out = out.replace(
-    /(?<![\w.-])([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})(?![\w.-])/g,
-    '<a href="mailto:$1">$1</a>'
-  );
-
-
-  // ---------------------------------------------------------
-  // Convert phone numbers into clickable tel links.
-  //
-  // Handles formats such as:
-  // +91 8002 974 625
-  // +91-8002-974-625
-  // 8002974625
-  // ---------------------------------------------------------
-  out = out.replace(
-    /(?<![\d])(\+91[\s-]?)?[6-9]\d{3}[\s-]?\d{3}[\s-]?\d{3}(?![\d])/g,
-    (phone) => {
-      const digits = phone.replace(/\D/g, "");
-
-      const internationalNumber =
-        phone.trim().startsWith("+91")
-          ? `+${digits}`
-          : `+91${digits}`;
-
-      return `
-        <a
-          href="tel:${internationalNumber}"
-        >${phone}</a>
-      `;
-    }
-  );
-
-
-  // ---------------------------------------------------------
-  // Basic Markdown formatting.
-  // ---------------------------------------------------------
-  out = out.replace(
-    /\*\*([^*]+)\*\*/g,
-    "<strong>$1</strong>"
-  );
-
-  out = out.replace(
-    /(?<!\*)\*([^*]+)\*(?!\*)/g,
-    "<em>$1</em>"
-  );
-
-
-  // ---------------------------------------------------------
-  // Restore protected Markdown links.
-  // ---------------------------------------------------------
-  out = out.replace(
-    /@@LINK_(\d+)@@/g,
-    (_, index) => linkPlaceholders[Number(index)]
-  );
-
-
-  // ---------------------------------------------------------
-  // Restore protected inline code.
-  // ---------------------------------------------------------
-  out = out.replace(
-    /@@CODE_(\d+)@@/g,
-    (_, index) => codePlaceholders[Number(index)]
-  );
-
+  out = out.replace(/@@LINK_(\d+)@@/g, (_, index) => linkPlaceholders[Number(index)]);
+  out = out.replace(/@@CODE_(\d+)@@/g, (_, index) => codePlaceholders[Number(index)]);
 
   return out;
 }
@@ -1626,12 +1178,10 @@ function renderMarkdown(md) {
 }
 
 // =============================================================
-// TOOLTIPS (custom, delegated so dynamically-added buttons work too)
+// TOOLTIPS
 // =============================================================
 
 function initializeTooltips() {
-  // Delegated listeners cover elements added after initial render
-  // (e.g. per-message copy/regenerate buttons).
   document.addEventListener("mouseover", (e) => {
     const target = e.target.closest("[data-tooltip]");
     if (target) showTooltip(target);
@@ -1652,9 +1202,6 @@ function initializeTooltips() {
     if (target) hideTooltip();
   }, true);
 
-  // Cleanly dismiss tooltips when any tooltip element is clicked. 
-  // This explicitly prevents "stale" tooltips from lingering when 
-  // a button initiates a layout shift, disables, or hides entirely.
   document.addEventListener("click", (e) => {
     if (e.target.closest("[data-tooltip]")) {
       hideTooltip();
@@ -1670,34 +1217,25 @@ function showTooltip(el) {
 
   els.customTooltip.textContent = label;
 
-  // Read raw dimensions cleanly before overriding any styles
   const targetRect = el.getBoundingClientRect();
   const tooltipRect = els.customTooltip.getBoundingClientRect();
 
-  // Baseline attempt: exactly centered above the element
   let top = targetRect.top - tooltipRect.height - 8;
   let left = targetRect.left + (targetRect.width / 2) - (tooltipRect.width / 2);
 
-  // --- Viewport Boundary Collision Handlers ---
-
-  // Vertical collision: if it clips off the top, flip it below the button
   if (top < 8) {
     top = targetRect.bottom + 8;
-
-    // Failsafe clamp if flipping it hits the bottom
     if (top + tooltipRect.height > window.innerHeight - 8) {
       top = window.innerHeight - tooltipRect.height - 8;
     }
   }
 
-  // Horizontal collision: firmly pad against edge if it clips left/right sides
   if (left < 8) {
     left = 8;
   } else if (left + tooltipRect.width > window.innerWidth - 8) {
     left = window.innerWidth - tooltipRect.width - 8;
   }
 
-  // Set explicitly mapped pixels, allowing CSS to strictly handle animations
   els.customTooltip.style.top = `${top}px`;
   els.customTooltip.style.left = `${left}px`;
   els.customTooltip.classList.add("is-visible");
@@ -1710,7 +1248,7 @@ function hideTooltip() {
 }
 
 // =============================================================
-// STORAGE HELPERS (safe wrappers — never let storage errors break the UI)
+// STORAGE HELPERS
 // =============================================================
 
 function safeGetItem(key) {
@@ -1724,9 +1262,7 @@ function safeGetItem(key) {
 function safeSetItem(key, value) {
   try {
     localStorage.setItem(key, value);
-  } catch (err) {
-    // storage unavailable (private browsing, quota, etc.) — fail silently
-  }
+  } catch (err) { }
 }
 
 // =============================================================
