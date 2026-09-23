@@ -11,6 +11,13 @@ const SIDEBAR_STORAGE_KEY = "portfolio_ai_sidebar";
 const MAX_TEXTAREA_HEIGHT = 160;
 const ACCEPTED_FILE_TYPES = [".pdf", ".docx", ".txt"];
 
+const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
+const MAX_CHAT_MESSAGE_LENGTH = 4000;
+const MAX_RECRUITER_MESSAGE_LENGTH = 2000;
+
+const CHAT_STREAM_TIMEOUT_MS = 45000;
+const JD_ANALYSIS_TIMEOUT_MS = 75000;
+
 const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 // ---------- Centralized state ----------
@@ -21,6 +28,7 @@ const state = {
   conversationHistory: [],
   parsedDocument: null,
   isParsingFile: false,
+  activeRequestController: null,
   mobileMediaQuery: window.matchMedia("(max-width: 900px)"),
 };
 
@@ -387,17 +395,33 @@ function updateSendButtonState() {
 async function sendMessage() {
   const text = els.messageInput.value.trim();
 
-  // IMPORTANT:
-  // Capture the File object BEFORE clearAttachment()
-  // because clearAttachment() resets state.attachedFile.
+  // Capture the File object BEFORE clearAttachment().
   const attachedFile =
     state.attachedFile?.file || null;
 
-  // Nothing to send.
+  // No input to send.
   if (
     (!text && !attachedFile) ||
     state.isSending
   ) {
+    return;
+  }
+
+  // Client-side message limits.
+  if (!attachedFile && text.length > MAX_CHAT_MESSAGE_LENGTH) {
+    showTransientError(
+      `Message is too long. Maximum length is ${MAX_CHAT_MESSAGE_LENGTH} characters.`
+    );
+    return;
+  }
+
+  if (
+    attachedFile &&
+    text.length > MAX_RECRUITER_MESSAGE_LENGTH
+  ) {
+    showTransientError(
+      `Recruiter instruction is too long. Maximum length is ${MAX_RECRUITER_MESSAGE_LENGTH} characters.`
+    );
     return;
   }
 
@@ -429,6 +453,14 @@ async function sendMessage() {
 
   setSendButtonLoading(true);
 
+  // One controller owns the current request.
+  // New Chat can abort it safely.
+  const requestController =
+    new AbortController();
+
+  state.activeRequestController =
+    requestController;
+
   // Pulse stays visible until:
   // - first streamed token (normal chat), OR
   // - complete JD analysis response (file flow)
@@ -448,7 +480,8 @@ async function sendMessage() {
       const analysis =
         await analyzeJobDescription(
           attachedFile,
-          text
+          text,
+          requestController
         );
 
       console.log(
@@ -469,32 +502,42 @@ async function sendMessage() {
       );
 
     } catch (error) {
+      // If New Chat intentionally cancelled this request,
+      // do not insert an error message into the new chat.
+      const wasCancelledByReset =
+        error?.name === "AbortError" &&
+        state.activeRequestController !== requestController;
 
-      console.error(
-        "[JD ANALYZE] Request failed:",
-        error
-      );
+      if (!wasCancelledByReset) {
+        console.error(
+          "[JD ANALYZE] Request failed:",
+          error
+        );
 
-      removeThinkingIndicator(
-        thinkingEl
-      );
+        removeThinkingIndicator(
+          thinkingEl
+        );
 
-      addMessage(
-        "assistant",
-        error.message ||
-        "I couldn't analyze this job description right now."
-      );
+        addMessage(
+          "assistant",
+          error.message ||
+          "I couldn't analyze this job description right now."
+        );
+      }
 
     } finally {
+      if (
+        state.activeRequestController === requestController
+      ) {
+        state.activeRequestController = null;
+        state.isSending = false;
+        state.isParsingFile = false;
 
-      setSendButtonLoading(false);
+        setSendButtonLoading(false);
+        updateSendButtonState();
 
-      state.isSending = false;
-      state.isParsingFile = false;
-
-      updateSendButtonState();
-
-      els.messageInput.focus();
+        els.messageInput.focus();
+      }
     }
 
     return;
@@ -509,10 +552,23 @@ async function sendMessage() {
     ...state.conversationHistory
   ];
 
+  let streamTimeoutId = null;
+
+  const resetStreamTimeout = () => {
+    clearTimeout(streamTimeoutId);
+
+    streamTimeoutId =
+      setTimeout(() => {
+        requestController.abort();
+      }, CHAT_STREAM_TIMEOUT_MS);
+  };
+
   try {
     console.log(
       "[CHAT] Sending streaming request..."
     );
+
+    resetStreamTimeout();
 
     const response = await fetch(
       `${BACKEND_BASE_URL}/api/chat/stream`,
@@ -522,6 +578,9 @@ async function sendMessage() {
         headers: {
           "Content-Type": "application/json",
         },
+
+        signal:
+          requestController.signal,
 
         body: JSON.stringify({
           message: text,
@@ -584,6 +643,8 @@ async function sendMessage() {
         break;
       }
 
+      resetStreamTimeout();
+
       const chunk =
         decoder.decode(
           value,
@@ -596,8 +657,8 @@ async function sendMessage() {
 
       fullResponse += chunk;
 
-      // Pulse disappears ONLY after
-      // actual AI content arrives.
+      // Pulse disappears ONLY after actual
+      // AI content arrives.
       if (!hasReceivedFirstChunk) {
         hasReceivedFirstChunk = true;
 
@@ -624,12 +685,22 @@ async function sendMessage() {
     if (finalChunk) {
       fullResponse += finalChunk;
 
-      if (streamingMessage) {
-        streamingMessage.content.innerHTML =
-          renderMarkdown(
-            fullResponse
-          );
+      if (!streamingMessage) {
+        // Extremely defensive fallback:
+        // if content arrived only during decoder flush,
+        // create the assistant message now.
+        removeThinkingIndicator(
+          thinkingEl
+        );
+
+        streamingMessage =
+          createStreamingAssistantMessage();
       }
+
+      streamingMessage.content.innerHTML =
+        renderMarkdown(
+          fullResponse
+        );
 
       scrollToLatestMessage();
     }
@@ -655,36 +726,56 @@ async function sendMessage() {
     });
 
   } catch (error) {
+    const wasCancelledByReset =
+      error?.name === "AbortError" &&
+      state.activeRequestController !== requestController;
 
-    console.error(
-      "[CHAT] Streaming request failed:",
-      error
-    );
+    if (!wasCancelledByReset) {
+      console.error(
+        "[CHAT] Streaming request failed:",
+        error
+      );
 
-    removeThinkingIndicator(
-      thinkingEl
-    );
+      removeThinkingIndicator(
+        thinkingEl
+      );
 
-    addMessage(
-      "assistant",
-      "I couldn't reach the AI backend right now. Please try again in a moment."
-    );
+      const message =
+        error?.name === "AbortError"
+          ? "The AI response timed out. Please try again."
+          : "I couldn't reach the AI backend right now. Please try again in a moment.";
+
+      addMessage(
+        "assistant",
+        message
+      );
+    }
 
   } finally {
+    clearTimeout(streamTimeoutId);
 
-    setSendButtonLoading(false);
+    if (
+      state.activeRequestController === requestController
+    ) {
+      state.activeRequestController = null;
 
-    state.isSending = false;
-    state.isParsingFile = false;
+      setSendButtonLoading(false);
 
-    updateSendButtonState();
+      state.isSending = false;
+      state.isParsingFile = false;
 
-    els.messageInput.focus();
+      updateSendButtonState();
+
+      els.messageInput.focus();
+    }
   }
 }
 
 function setSendButtonLoading(isLoading) {
-  els.sendBtn.classList.toggle("is-loading", isLoading);
+  els.sendBtn.classList.toggle(
+    "is-loading",
+    isLoading
+  );
 
   const hasText =
     els.messageInput.value.trim().length > 0;
@@ -694,7 +785,8 @@ function setSendButtonLoading(isLoading) {
 
   els.sendBtn.disabled =
     isLoading ||
-    (!hasText && !hasFile);
+    (!hasText && !hasFile) ||
+    state.isParsingFile;
 }
 
 function showWelcomeIfFirstMessage() {
@@ -858,8 +950,15 @@ function scrollToLatestMessage() {
 }
 
 function resetChat() {
+  // Cancel any in-flight request before clearing the chat.
+  if (state.activeRequestController) {
+    state.activeRequestController.abort();
+    state.activeRequestController = null;
+  }
+
   state.hasMessages = false;
   state.isSending = false;
+  state.isParsingFile = false;
   state.conversationHistory = [];
   els.messagesContainer.innerHTML = "";
   els.messagesContainer.classList.remove("is-active");
@@ -929,7 +1028,8 @@ async function getAssistantResponse(userText, history) {
 async function streamAssistantResponse(
   userText,
   history,
-  onChunk
+  onChunk,
+  signal = undefined
 ) {
   const response = await fetch(
     `${BACKEND_BASE_URL}/api/chat/stream`,
@@ -939,6 +1039,8 @@ async function streamAssistantResponse(
       headers: {
         "Content-Type": "application/json",
       },
+
+      signal,
 
       body: JSON.stringify({
         message: userText,
@@ -1012,51 +1114,81 @@ function initializeFileUpload() {
 
 async function analyzeJobDescription(
   file,
-  userMessage
+  userMessage,
+  requestController
 ) {
   const formData = new FormData();
 
-  formData.append("file", file);
+  formData.append(
+    "file",
+    file
+  );
 
-  if (userMessage && userMessage.trim()) {
+  if (
+    userMessage &&
+    userMessage.trim()
+  ) {
     formData.append(
       "message",
       userMessage.trim()
     );
   }
 
-  const response = await fetch(
-    `${BACKEND_BASE_URL}/api/jd/analyze`,
-    {
-      method: "POST",
-      body: formData,
-    }
-  );
-
-  let data = null;
+  const timeoutId =
+    setTimeout(() => {
+      requestController.abort();
+    }, JD_ANALYSIS_TIMEOUT_MS);
 
   try {
-    data = await response.json();
-  } catch {
-    throw new Error(
-      "Invalid response received from JD analysis backend."
+    const response = await fetch(
+      `${BACKEND_BASE_URL}/api/jd/analyze`,
+      {
+        method: "POST",
+        body: formData,
+        signal:
+          requestController.signal,
+      }
     );
-  }
 
-  if (!response.ok) {
-    throw new Error(
-      data?.detail ||
-      "Failed to analyze the job description."
-    );
-  }
+    let data = null;
 
-  if (!data) {
-    throw new Error(
-      "JD analysis returned an empty response."
-    );
-  }
+    try {
+      data = await response.json();
+    } catch {
+      throw new Error(
+        "Invalid response received from JD analysis backend."
+      );
+    }
 
-  return data;
+    if (!response.ok) {
+      throw new Error(
+        data?.detail ||
+        "Failed to analyze the job description."
+      );
+    }
+
+    if (!data) {
+      throw new Error(
+        "JD analysis returned an empty response."
+      );
+    }
+
+    return data;
+
+  } catch (error) {
+    if (
+      error?.name === "AbortError"
+    ) {
+      // The caller distinguishes intentional New Chat
+      // cancellation from a timeout by checking controller identity.
+      throw error;
+    }
+
+    throw error;
+
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 function formatJDAnalysisMarkdown(analysis) {
@@ -1109,7 +1241,7 @@ ${formatList(analysis.relevant_experience)}
 `.trim();
 }
 
-async function handleFileSelection(e) {
+function handleFileSelection(e) {
   const file =
     e.target.files && e.target.files[0];
 
@@ -1127,7 +1259,7 @@ async function handleFileSelection(e) {
     return;
   }
 
-  if (file.size > 10 * 1024 * 1024) {
+  if (file.size > MAX_FILE_SIZE_BYTES) {
     showTransientError(
       "File is too large. Maximum size is 10 MB."
     );

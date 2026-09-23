@@ -1,16 +1,14 @@
+import logging
+from io import BytesIO
 from pathlib import Path
 from typing import Annotated
-
-from backend.services.jd_service import (
-    compare_jd_with_profile,
-    extract_jd_requirements,
-)
 
 from fastapi import (
     APIRouter,
     File,
     Form,
     HTTPException,
+    Request,
     UploadFile,
 )
 
@@ -31,6 +29,17 @@ from backend.parsers.txt_parser import (
     extract_txt_text,
 )
 
+from backend.services.jd_service import (
+    compare_jd_with_profile,
+    extract_jd_requirements,
+)
+
+from backend.services.rate_limiter import (
+    enforce_rate_limit,
+)
+
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/jd",
@@ -47,24 +56,64 @@ ALLOWED_EXTENSIONS = {
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 
 
-@router.post(
-    "/parse",
-    response_model=ParsedDocument,
-)
-async def parse_job_description(
-    file: Annotated[
-        UploadFile,
-        File(description="Job description file"),
-    ],
-) -> ParsedDocument:
+def _get_client_id(request: Request) -> str:
+    if request.client:
+        return request.client.host
 
+    return "unknown"
+
+
+def _enforce_rate_limit(
+    request: Request,
+    bucket: str,
+    max_requests: int,
+) -> None:
+    client_id = _get_client_id(request)
+
+    try:
+        enforce_rate_limit(
+            client_id=client_id,
+            bucket=bucket,
+            max_requests=max_requests,
+        )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=429,
+            detail=str(error),
+        ) from error
+
+
+def _validate_file_signature(
+    contents: bytes,
+    extension: str,
+) -> None:
+    """
+    Lightweight content-signature checks.
+
+    This does not replace real parsing; it only catches obvious
+    extension/content mismatches early.
+    """
+    if extension == ".pdf":
+        if not contents.startswith(b"%PDF-"):
+            raise HTTPException(
+                status_code=422,
+                detail="The uploaded PDF appears to be invalid.",
+            )
+
+    elif extension == ".docx":
+        # DOCX is a ZIP-based Open XML package.
+        if not contents.startswith(b"PK"):
+            raise HTTPException(
+                status_code=422,
+                detail="The uploaded DOCX appears to be invalid.",
+            )
+
+
+def _read_and_validate_file(
+    file: UploadFile,
+) -> tuple[str, bytes]:
     filename = file.filename or ""
-
     extension = Path(filename).suffix.lower()
-
-    # ---------------------------------------------------------
-    # File type validation
-    # ---------------------------------------------------------
 
     if extension not in ALLOWED_EXTENSIONS:
         raise HTTPException(
@@ -75,9 +124,37 @@ async def parse_job_description(
             ),
         )
 
-    # ---------------------------------------------------------
-    # Read file
-    # ---------------------------------------------------------
+    # The endpoint already uses UploadFile, but reading the complete
+    # body still gives us a deterministic size check for V1.
+    import asyncio
+
+    try:
+        contents = asyncio.run(file.read())
+    except RuntimeError:
+        # `asyncio.run()` should not be used inside FastAPI's event loop.
+        # This branch exists only to make accidental reuse obvious.
+        raise HTTPException(
+            status_code=500,
+            detail="Unable to read the uploaded file.",
+        )
+
+    return extension, contents
+
+
+async def _read_file(
+    file: UploadFile,
+) -> tuple[str, str, bytes]:
+    filename = file.filename or ""
+    extension = Path(filename).suffix.lower()
+
+    if extension not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Unsupported file type. "
+                "Only PDF, DOCX, and TXT files are allowed."
+            ),
+        )
 
     contents = await file.read()
 
@@ -93,20 +170,21 @@ async def parse_job_description(
             detail="File is too large. Maximum size is 10 MB.",
         )
 
-    # ---------------------------------------------------------
-    # Reset file pointer so parsers can read from the start.
-    # ---------------------------------------------------------
+    _validate_file_signature(
+        contents,
+        extension,
+    )
 
-    from io import BytesIO
+    return filename, extension, contents
 
+
+def _extract_text(
+    contents: bytes,
+    extension: str,
+) -> str:
     file_stream = BytesIO(contents)
 
-    # ---------------------------------------------------------
-    # Select parser
-    # ---------------------------------------------------------
-
     try:
-
         if extension == ".pdf":
             extracted_text = extract_pdf_text(
                 file_stream
@@ -123,10 +201,9 @@ async def parse_job_description(
             )
 
     except Exception as error:
-
-        print(
-            f"[JD PARSE ERROR] "
-            f"{type(error).__name__}: {error}"
+        logger.exception(
+            "[JD PARSE ERROR] %s",
+            type(error).__name__,
         )
 
         raise HTTPException(
@@ -138,9 +215,7 @@ async def parse_job_description(
             ),
         ) from error
 
-    # ---------------------------------------------------------
-    # Make sure extraction actually produced text.
-    # ---------------------------------------------------------
+    extracted_text = (extracted_text or "").strip()
 
     if not extracted_text:
         raise HTTPException(
@@ -150,6 +225,36 @@ async def parse_job_description(
                 "from this document."
             ),
         )
+
+    return extracted_text
+
+
+@router.post(
+    "/parse",
+    response_model=ParsedDocument,
+)
+async def parse_job_description(
+    request: Request,
+    file: Annotated[
+        UploadFile,
+        File(description="Job description file"),
+    ],
+) -> ParsedDocument:
+
+    _enforce_rate_limit(
+        request,
+        bucket="jd-parse",
+        max_requests=20,
+    )
+
+    filename, extension, contents = await _read_file(
+        file
+    )
+
+    extracted_text = _extract_text(
+        contents,
+        extension,
+    )
 
     return ParsedDocument(
         filename=filename,
@@ -164,6 +269,7 @@ async def parse_job_description(
     response_model=JDAnalysis,
 )
 async def analyze_job_description(
+    request: Request,
     file: Annotated[
         UploadFile,
         File(description="Job description file"),
@@ -174,133 +280,74 @@ async def analyze_job_description(
     ] = None,
 ) -> JDAnalysis:
 
-    filename = file.filename or ""
+    _enforce_rate_limit(
+        request,
+        bucket="jd-analysis",
+        max_requests=10,
+    )
 
-    extension = Path(filename).suffix.lower()
+    filename, extension, contents = await _read_file(
+        file
+    )
 
-    if extension not in ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Unsupported file type. "
-                "Only PDF, DOCX, and TXT files are allowed."
-            ),
-        )
-
-    contents = await file.read()
-
-    if not contents:
-        raise HTTPException(
-            status_code=400,
-            detail="The uploaded file is empty.",
-        )
-
-    if len(contents) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=413,
-            detail="File is too large. Maximum size is 10 MB.",
-        )
-
-    from io import BytesIO
-
-    file_stream = BytesIO(contents)
+    extracted_text = _extract_text(
+        contents,
+        extension,
+    )
 
     try:
-
-        if extension == ".pdf":
-            extracted_text = extract_pdf_text(
-                file_stream
-            )
-
-        elif extension == ".docx":
-            extracted_text = extract_docx_text(
-                file_stream
-            )
-
-        else:
-            extracted_text = extract_txt_text(
-                file_stream
-            )
-
-    except Exception as error:
-
-        print(
-            f"[JD ANALYZE PARSE ERROR] "
-            f"{type(error).__name__}: {error}"
+        logger.info(
+            "[JD ANALYZE] Extracting requirements for file=%s",
+            filename,
         )
-
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "The job description could not be parsed."
-            ),
-        ) from error
-
-    if not extracted_text:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "No readable text could be extracted "
-                "from this document."
-            ),
-        )
-
-    try:
-
-        print("[JD ANALYZE] Extracting requirements...")
 
         requirements = await extract_jd_requirements(
             extracted_text
         )
 
-        print(
+        logger.info(
             "[JD ANALYZE] Requirement extraction successful."
         )
 
-        print("[JD ANALYZE] Comparing with profile...")
+        logger.info(
+            "[JD ANALYZE] Comparing with profile."
+        )
 
         analysis = await compare_jd_with_profile(
             requirements,
             user_message=message,
         )
 
-        print(
+        logger.info(
             "[JD ANALYZE] Profile comparison successful."
         )
 
         return analysis
 
     except ValueError as error:
-
         raise HTTPException(
             status_code=422,
             detail=str(error),
         ) from error
 
     except RuntimeError as error:
-
-        print(
-            f"[JD ANALYZE ERROR] {error}"
+        logger.exception(
+            "[JD ANALYZE ERROR] %s",
+            type(error).__name__,
         )
 
         raise HTTPException(
             status_code=500,
-            detail=(
-                "JD analysis failed. "
-                "Please try again."
-            ),
+            detail="JD analysis failed. Please try again.",
         ) from error
 
     except Exception as error:
-
-        print(
-            f"[JD ANALYZE ERROR] "
-            f"{type(error).__name__}: {error}"
+        logger.exception(
+            "[JD ANALYZE ERROR] %s",
+            type(error).__name__,
         )
 
         raise HTTPException(
             status_code=502,
-            detail=(
-                "Unable to analyze the job description."
-            ),
+            detail="Unable to analyze the job description.",
         ) from error

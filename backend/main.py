@@ -1,7 +1,25 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
 from backend.api.chat import router as chat_router
 from backend.api.jd import router as jd_router
+
+
+CLIENT_URL = os.getenv(
+    "CLIENT_URL"
+)
+
+ALLOWED_ORIGINS = [
+    "http://localhost:5500",
+    "http://127.0.0.1:5500",
+]
+
+if CLIENT_URL:
+    ALLOWED_ORIGINS.append(
+        CLIENT_URL.rstrip("/")
+    )
 
 
 app = FastAPI(
@@ -13,10 +31,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5500",
-        "http://127.0.0.1:5500",
-    ],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

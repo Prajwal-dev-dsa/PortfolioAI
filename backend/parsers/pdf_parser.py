@@ -1,17 +1,17 @@
 from pypdf import PdfReader
 
+MAX_PDF_PAGES = 50
 
-def extract_pdf_text(file) -> str:
-    """
-    Extract text from all pages of a PDF.
+def extract_pdf_text(file_stream) -> str:
+    reader = PdfReader(file_stream)
 
-    The parser preserves useful line structure by using
-    pypdf's layout extraction mode.
-    """
+    if len(reader.pages) > MAX_PDF_PAGES:
+        raise ValueError(
+            "PDF contains too many pages. "
+            f"Maximum allowed is {MAX_PDF_PAGES} pages."
+        )
 
-    reader = PdfReader(file)
-
-    extracted_pages = []
+    pages = []
 
     for page in reader.pages:
         text = page.extract_text(
@@ -19,6 +19,6 @@ def extract_pdf_text(file) -> str:
         )
 
         if text:
-            extracted_pages.append(text)
+            pages.append(text)
 
-    return "\n\n".join(extracted_pages).strip()
+    return "\n\n".join(pages).strip()
