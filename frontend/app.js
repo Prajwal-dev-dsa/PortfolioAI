@@ -5,7 +5,11 @@
 import { animate, stagger } from "https://cdn.jsdelivr.net/npm/motion@10.18.0/+esm";
 
 // ---------- Config ----------
-const BACKEND_BASE_URL = "http://127.0.0.1:8000";
+const BACKEND_BASE_URL =
+  window.location.hostname === "localhost" ||
+  window.location.hostname === "127.0.0.1"
+    ? "http://127.0.0.1:8000"
+    : "https://portfolioai-9yzi.onrender.com";
 const THEME_STORAGE_KEY = "portfolio_ai_theme";
 const SIDEBAR_STORAGE_KEY = "portfolio_ai_sidebar";
 const MAX_TEXTAREA_HEIGHT = 160;
