@@ -1050,41 +1050,168 @@ function escapeHtml(str) {
 
 function renderInline(text) {
   let out = escapeHtml(text);
+
+  // ---------------------------------------------------------
+  // Inline code placeholders
+  // ---------------------------------------------------------
   const codePlaceholders = [];
 
   out = out.replace(/`([^`]+)`/g, (_, code) => {
     const index = codePlaceholders.length;
-    codePlaceholders.push(`<code>${code}</code>`);
+
+    codePlaceholders.push(
+      `<code>${code}</code>`
+    );
+
     return `@@CODE_${index}@@`;
   });
 
+  // ---------------------------------------------------------
+  // Markdown link placeholders
+  //
+  // Example:
+  // [GitHub Repository](https://github.com/...)
+  //
+  // Also handles malformed model output such as:
+  // [https://github.com/...](https://github.com/...)
+  // ---------------------------------------------------------
   const linkPlaceholders = [];
-  out = out.replace(/\[([^\]]+)\]\(((?:https?:\/\/\vert{}mailto:\vert{}tel:)[^\s)]+)\)/g, (_, label, url) => {
-    const index = linkPlaceholders.length;
-    linkPlaceholders.push(`<a href="${url}" target="_blank" rel="noopener noreferrer">${label}</a>`);
-    return `@@LINK_${index}@@`;
-  });
 
-  out = out.replace(/https?:\/\/[^\s<]+/g, (url) => {
-    const trailingMatch = url.match(/[.,!?;:]+$/);
-    const trailing = trailingMatch ? trailingMatch[0] : "";
-    const cleanUrl = trailing ? url.slice(0, -trailing.length) : url;
-    return `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer">${cleanUrl}</a>${trailing}`;
-  });
+  out = out.replace(
+    /\[([^\]]+)\]\(((?:https?:\/\/|mailto:|tel:)[^\s)]+)\)/g,
+    (_, label, url) => {
+      const index = linkPlaceholders.length;
 
-  out = out.replace(/(?<![\w.-])([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})(?![\w.-])/g, '<a href="mailto:$1">$1</a>');
+      let displayLabel = label.trim();
 
-  out = out.replace(/(?<![\d])(\+91[\s-]?)?[6-9]\d{3}[\s-]?\d{3}[\s-]?\d{3}(?![\d])/g, (phone) => {
-    const digits = phone.replace(/\D/g, "");
-    const internationalNumber = phone.trim().startsWith("+91") ? `+${digits}` : `+91${digits}`;
-    return `<a href="tel:${internationalNumber}">${phone}</a>`;
-  });
+      // If the model uses the full URL as the label,
+      // replace it with a cleaner human-readable label.
+      if (
+        displayLabel === url ||
+        /^https?:\/\//i.test(displayLabel)
+      ) {
+        try {
+          const parsedUrl = new URL(url);
 
-  out = out.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-  out = out.replace(/(?<!\*)\*([^*]+)\*(?!\*)/g, "<em>$1</em>");
+          const hostname = parsedUrl.hostname
+            .replace(/^www\./i, "")
+            .toLowerCase();
 
-  out = out.replace(/@@LINK_(\d+)@@/g, (_, index) => linkPlaceholders[Number(index)]);
-  out = out.replace(/@@CODE_(\d+)@@/g, (_, index) => codePlaceholders[Number(index)]);
+          if (hostname.includes("linkedin.com")) {
+            displayLabel = "LinkedIn";
+          } else if (hostname.includes("github.com")) {
+            displayLabel = "GitHub";
+          } else if (hostname.includes("leetcode.com")) {
+            displayLabel = "LeetCode";
+          } else {
+            displayLabel = hostname;
+          }
+        } catch {
+          displayLabel = "Open Link";
+        }
+      }
+
+      // Only allow safe link schemes.
+      const isSafeLink =
+        /^(https?:\/\/|mailto:|tel:)/i.test(url);
+
+      if (!isSafeLink) {
+        return displayLabel;
+      }
+
+      linkPlaceholders.push(
+        `<a href="${url}" target="_blank" rel="noopener noreferrer">${displayLabel}</a>`
+      );
+
+      return `@@LINK_${index}@@`;
+    }
+  );
+
+  // ---------------------------------------------------------
+  // Raw URLs
+  //
+  // Example:
+  // https://github.com/Prajwal-dev-dsa
+  // ---------------------------------------------------------
+  out = out.replace(
+    /https?:\/\/[^\s<]+/g,
+    (url) => {
+      const trailingMatch =
+        url.match(/[.,!?;:]+$/);
+
+      const trailing =
+        trailingMatch
+          ? trailingMatch[0]
+          : "";
+
+      const cleanUrl =
+        trailing
+          ? url.slice(0, -trailing.length)
+          : url;
+
+      return (
+        `<a href="${cleanUrl}" target="_blank" rel="noopener noreferrer">${cleanUrl}</a>` +
+        trailing
+      );
+    }
+  );
+
+  // ---------------------------------------------------------
+  // Email addresses
+  // ---------------------------------------------------------
+  out = out.replace(
+    /(?<![\w.-])([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})(?![\w.-])/g,
+    '<a href="mailto:$1">$1</a>'
+  );
+
+  // ---------------------------------------------------------
+  // Indian phone numbers
+  // ---------------------------------------------------------
+  out = out.replace(
+    /(?<![\d])(\+91[\s-]?)?[6-9]\d{3}[\s-]?\d{3}[\s-]?\d{3}(?![\d])/g,
+    (phone) => {
+      const digits =
+        phone.replace(/\D/g, "");
+
+      const internationalNumber =
+        phone.trim().startsWith("+91")
+          ? `+${digits}`
+          : `+91${digits}`;
+
+      return `<a href="tel:${internationalNumber}">${phone}</a>`;
+    }
+  );
+
+  // ---------------------------------------------------------
+  // Bold
+  // ---------------------------------------------------------
+  out = out.replace(
+    /\*\*([^*]+)\*\*/g,
+    "<strong>$1</strong>"
+  );
+
+  // ---------------------------------------------------------
+  // Italic
+  // ---------------------------------------------------------
+  out = out.replace(
+    /(?<!\*)\*([^*]+)\*(?!\*)/g,
+    "<em>$1</em>"
+  );
+
+  // ---------------------------------------------------------
+  // Restore placeholders
+  // ---------------------------------------------------------
+  out = out.replace(
+    /@@LINK_(\d+)@@/g,
+    (_, index) =>
+      linkPlaceholders[Number(index)]
+  );
+
+  out = out.replace(
+    /@@CODE_(\d+)@@/g,
+    (_, index) =>
+      codePlaceholders[Number(index)]
+  );
 
   return out;
 }
