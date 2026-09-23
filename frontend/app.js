@@ -19,6 +19,8 @@ const state = {
   hasMessages: false,
   attachedFile: null,
   conversationHistory: [],
+  parsedDocument: null,
+  isParsingFile: false,
   mobileMediaQuery: window.matchMedia("(max-width: 900px)"),
 };
 
@@ -370,8 +372,13 @@ function resetTextarea() {
 }
 
 function updateSendButtonState() {
-  const hasText = els.messageInput.value.trim().length > 0;
-  els.sendBtn.disabled = !hasText || state.isSending;
+  const hasText =
+    els.messageInput.value.trim().length > 0;
+
+  els.sendBtn.disabled =
+    !hasText ||
+    state.isSending ||
+    state.isParsingFile;
 }
 
 async function sendMessage() {
@@ -862,20 +869,96 @@ function initializeFileUpload() {
   els.attachmentRemove.addEventListener("click", clearAttachment);
 }
 
-function handleFileSelection(e) {
-  const file = e.target.files && e.target.files[0];
+async function handleFileSelection(e) {
+  const file =
+    e.target.files && e.target.files[0];
+
   if (!file) return;
 
-  const extension = `.${file.name.split(".").pop().toLowerCase()}`;
+  const extension =
+    `.${file.name.split(".").pop().toLowerCase()}`;
 
   if (!ACCEPTED_FILE_TYPES.includes(extension)) {
-    showTransientError(`Unsupported file type. Please attach a ${ACCEPTED_FILE_TYPES.join(", ")} file.`);
+    showTransientError(
+      `Unsupported file type. Please attach a ${ACCEPTED_FILE_TYPES.join(", ")} file.`
+    );
+
     clearAttachment();
     return;
   }
 
-  state.attachedFile = { name: file.name, extension };
+  // Store the selected file for the current UI state.
+  state.attachedFile = {
+    name: file.name,
+    extension,
+  };
+
+  state.parsedDocument = null;
+  state.isParsingFile = true;
+
   renderAttachmentPreview();
+
+  // Update status text while backend parses the file.
+  els.attachmentType.textContent =
+    `${extension.replace(".", "").toUpperCase()} · Processing...`;
+
+  try {
+    const formData = new FormData();
+
+    formData.append("file", file);
+
+    const response = await fetch(
+      `${BACKEND_BASE_URL}/api/jd/parse`,
+      {
+        method: "POST",
+        body: formData,
+      }
+    );
+
+    let data = null;
+
+    try {
+      data = await response.json();
+    } catch {
+      throw new Error(
+        "Invalid response received from backend."
+      );
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        data?.detail ||
+        "Failed to parse the document."
+      );
+    }
+
+    state.parsedDocument = data;
+
+    els.attachmentType.textContent =
+      `${data.file_type} · Ready`;
+
+  } catch (error) {
+
+    console.error(
+      "Document parsing failed:",
+      error
+    );
+
+    state.parsedDocument = null;
+
+    showTransientError(
+      error.message ||
+      "The document could not be parsed."
+    );
+
+    clearAttachment();
+
+  } finally {
+
+    state.isParsingFile = false;
+
+    updateSendButtonState();
+  }
 }
 
 function renderAttachmentPreview() {
@@ -919,10 +1002,17 @@ function hideAttachmentPreview() {
 }
 
 function clearAttachment() {
-  hideTooltip(); // prevent stale hover states
+  hideTooltip();
+
   state.attachedFile = null;
+  state.parsedDocument = null;
+  state.isParsingFile = false;
+
   hideAttachmentPreview();
-  els.fileInput.value = ""; // allow re-selecting the same file
+
+  els.fileInput.value = "";
+
+  updateSendButtonState();
 }
 
 function showTransientError(message) {
