@@ -9,7 +9,7 @@ const BACKEND_BASE_URL =
   window.location.hostname === "localhost" ||
     window.location.hostname === "127.0.0.1"
     ? "http://127.0.0.1:8000"
-    : "https://portfolioai-9yzi.onrender.com";
+    : "https://prajwalai.onrender.com";
 const THEME_STORAGE_KEY = "portfolio_ai_theme";
 const MAX_TEXTAREA_HEIGHT = 160;
 const ACCEPTED_FILE_TYPES = [".pdf", ".docx", ".txt"];
